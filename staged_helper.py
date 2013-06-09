@@ -949,7 +949,7 @@ def run_analyzer(short_profile,    module_names,
     for flight_path_and_file in files_to_process:
         file_start_time = time.time()
         flight_file          = os.path.basename(flight_path_and_file)
-        logger.debug('starting', flight_file)
+        logger.debug('starting '+ flight_file)
         output_path_and_file  = get_output_file(output_dir, flight_path_and_file, short_profile, write_hdf)
 
         _, _, _, registration = get_info_from_filename(flight_file, frame_dict)
