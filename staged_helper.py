@@ -375,7 +375,7 @@ def kpv_to_oracle(cn, profile, flight_file, output_path_and_file, params, kpv):
     for value in kpv:
         try:
             units = params.get(value.name).units
-            print 'Units ', units
+            #print 'Units ', units
         except:
             units = None
         vals = [profile, flight_file, value.name, float(value.index), float(value.value), base_file, units ] 
@@ -894,8 +894,26 @@ def derive_parameters_mitreXXX(hdf, node_mgr, process_order, precomputed_paramet
         continue
     return params, paramst #kti_list, kpv_list, section_list, approach_list, flight_attrs
 
-###################################################################################################
+def dump_pickles(output_path_and_file, params, kti, kpv, phases, approach, flight_attrs, logger):
+    #dump params to pickle file -- versioned
+    pkl_end = pkl_suffix()
+    pickle_file=output_path_and_file.replace('.hdf5',pkl_end )
+    with open(pickle_file, 'wb') as output:
+        pickle.dump(params, output)
+    with open( pickle_file.replace(pkl_end,'_kti_'+pkl_end), 'wb') as output:
+        pickle.dump(kti, output)
+    with open(pickle_file.replace(pkl_end,'_kpv_'+pkl_end), 'wb') as output:
+        pickle.dump(kpv, output)
+    with open(pickle_file.replace(pkl_end,'_phases_'+pkl_end), 'wb') as output:
+        pickle.dump(phases, output)
+    with open(pickle_file.replace(pkl_end,'_approach_'+pkl_end), 'wb') as output:
+        pickle.dump(approach, output)
+    with open(pickle_file.replace(pkl_end,'_fltattr_'+pkl_end), 'wb') as output:
+        pickle.dump(flight_attrs, output)
+    logger.info('saved '+ pickle_file)
 
+
+###################################################################################################
 
 def run_analyzer(short_profile,    module_names,
                  logger,           files_to_process, 
@@ -938,7 +956,6 @@ def run_analyzer(short_profile,    module_names,
         aircraft_info         = frame_dict[registration]
         aircraft_info['Tail Number'] = registration
         logger.debug(aircraft_info)
-
         logger.debug(' *** Processing flight %s', flight_file)
         try: 
             #if True:
@@ -951,13 +968,8 @@ def run_analyzer(short_profile,    module_names,
                                         achieved_flight_record={'Myfile':output_path_and_file, 'Mydict':dict()}
                                         )
                 precomputed_parameters={} if short_profile=='base' else get_precomputed_parameters(flight_path_and_file, node_mgr)
-                kti, kpv, phases, approach, flight_attrs, params = derive_parameters_mitre(hdf, node_mgr, process_order, precomputed_parameters)
-                
-            if short_profile=='base':
-                #dump params to pickle file -- versioned
-                with open(output_path_and_file.replace('.hdf5',pkl_suffix()), 'wb') as output:
-                    pickle.dump(params, output)
-                    logger.info('saved '+ output_path_and_file.replace('.hdf5', pkl_suffix()))
+                kti, kpv, phases, approach, flight_attrs, params = derive_parameters_mitre(hdf, node_mgr, process_order, precomputed_parameters)                
+            if short_profile=='base': dump_pickles(output_path_and_file, params, kti, kpv, phases, approach, flight_attrs, logger)
             status='ok'
         except:
             ex_type, ex, tracebck = sys.exc_info()
@@ -973,7 +985,7 @@ def run_analyzer(short_profile,    module_names,
         report_timing(timestamp, stage, short_profile, flight_path_and_file, processing_time, status, logger, cn)
 
         if save_oracle and status=='ok':
-            kti_to_oracle(cn, short_profile, flight_path_and_file, output_path_and_file, kti)
+            kti_to_oracle(cn, short_profile, flight_file, output_path_and_file, kti)
             phase_to_oracle(cn, short_profile, flight_file, output_path_and_file, phases)
             kpv_to_oracle(cn, short_profile, flight_file, output_path_and_file, params, kpv)
             if short_profile=='base':  # for base analyze, store flight record
