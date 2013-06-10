@@ -1,7 +1,7 @@
 asias_fds_shared
 ================
 
-Routines to test FDS services and software for flight data analysis.  Portions of the code are adapted from code written by FDS.
+Routines to test services and software for flight data analysis provided by FDS (Flight Data Services Ltd).  Portions of the code are adapted from FDS routines.
 
 Project released under the Open Software License (OSL-3.0).
 
