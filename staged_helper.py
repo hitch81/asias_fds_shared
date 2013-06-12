@@ -98,7 +98,45 @@ def clean_up(time_start, file_count, logger, timing_report=None):
     for handler in logger.handlers: handler.close()        
 
 
-### job report TODO
+###  plots 
+def show_plot(plt):                      
+    print 'Paused for plot review. Close plot window to continue.'
+    plt.show()
+    plt.close()
+
+def save_plot(plt, fname):
+    plt.draw()
+    plt.savefig(fname, transparent=False ) #, bbox_inches="tight")
+    plt.close()
+
+def aplot(array_dict={}, title='array plot', grid=True, legend=True):
+    '''plot a dictionary of up to four arrays, with legend by default
+        example dict:  {'Airspeed': airspeed.array }
+    '''
+    import matplotlib.pyplot as plt
+    print 'title:', title
+    if len(array_dict.keys())==0:
+        print 'Nothing to plot!'
+        return
+    figure = plt.figure()
+    figure.set_size_inches(10,5)
+    series_names = array_dict.keys()[:4]  #only first 4
+    series_formats = ['k','g','b','r']    #color codes
+    for i,nm in enumerate(series_names):
+        plt.plot(array_dict[nm], series_formats[i])
+    if grid: plt.grid(True, color='gray')
+    plt.title(title)
+    if legend: 
+        leg = plt.legend(series_names, 'upper left', fancybox=True)
+        leg.get_frame().set_alpha(0.5)        
+    plt.xlabel('time index')
+    print 'Paused for plot review. Close plot window to continue.'
+    plt.show()
+    plt.clf()
+    plt.close()
+
+
+### job report 
 JOB_REPORT_FIELDS = ['run_time', 'stage',  'profile', 'cmt', 'input_path', 'output_path', 'file_count', 'processing_seconds']
 
 def get_job_record(timestamp, stage, profile, comment, input_path, output_path, file_count, processing_seconds):
@@ -778,6 +816,7 @@ def derive_parameters_mitre(hdf, node_mgr, process_order, precomputed_parameters
                                    expected_length, len(result.array))
                     result.array = result.array[:expected_length]
                 else:
+                    pdb.set_trace()
                     raise ValueError("Array length mismatch for parameter "
                                      "'%s'. Expected '%s', resulting array "
                                      "length '%s'." % (param_name,
@@ -957,8 +996,8 @@ def run_analyzer(short_profile,    module_names,
         aircraft_info['Tail Number'] = registration
         logger.debug(aircraft_info)
         logger.debug(' *** Processing flight %s', flight_file)
-        try: 
-            #if True:
+        #try: 
+        if True:
             derived_nodes_copy = copy.deepcopy(derived_nodes)
             series_copy = series_keys[:]
             with hdf_file(output_path_and_file) as hdf:
@@ -971,12 +1010,12 @@ def run_analyzer(short_profile,    module_names,
                 kti, kpv, phases, approach, flight_attrs, params = derive_parameters_mitre(hdf, node_mgr, process_order, precomputed_parameters)                
             if short_profile=='base': dump_pickles(output_path_and_file, params, kti, kpv, phases, approach, flight_attrs, logger)
             status='ok'
-        except:
-            ex_type, ex, tracebck = sys.exc_info()
-            logger.warning('ANALYZER ERROR '+flight_file)
-            traceback.print_tb(tracebck)
-            status='failed'
-            del tracebck                
+#        except:
+#            ex_type, ex, tracebck = sys.exc_info()
+#            logger.warning('ANALYZER ERROR '+flight_file)
+#            traceback.print_tb(tracebck)
+#            status='failed'
+#            del tracebck                
 
         logger.info(' *** Processing flight %s finished ' + flight_file + ' time: ' + str(time.time()-file_start_time) + 'status: '+status)
         # reports
