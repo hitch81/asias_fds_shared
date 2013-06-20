@@ -139,11 +139,11 @@ def aplot(array_dict={}, title='array plot', grid=True, legend=True):
 ### job report 
 JOB_REPORT_FIELDS = ['run_time', 'stage',  'profile', 'cmt', 'input_path', 'output_path', 'file_count', 'processing_seconds']
 
-def get_job_record(timestamp, stage, profile, comment, input_path, output_path, file_count, processing_seconds):
+def get_job_record(timestamp, stage, profile, comment, input_path, output_path, file_count, processing_seconds, file_repository='central'):
     '''return job info as an OrderedDict'''
     #computer_name = platform.node()
     rec = OrderedDict([ ('run_time', timestamp),    ('stage', stage), 
-                        ('profile', profile),       ('cmt', comment), 
+                        ('profile', profile),       ('cmt', comment), ('file_repository',file_repository),
                         ('input_path', input_path), ('output_path', output_path),
                         ('file_count', file_count), ('processing_seconds', processing_seconds)
                      ])
@@ -183,7 +183,11 @@ def initialize_timing_report(REPORTS_DIR):
 def report_timing(timestamp, stage, profile, filepath, 
                   processing_time, status, logger, db_connection=None):
     '''save timing record to csv and if oracle (if available)'''
-    report_name = settings.PREP_REPORTS_PATH + 'fds_processing_time.csv'        
+    if profile=='base':
+        report_name = settings.PREP_REPORTS_PATH + 'fds_processing_time.csv'        
+    else: 
+        report_name = settings.PROFILE_REPORTS_PATH + 'fds_processing_time.csv' 
+
     file_size = os.path.getsize(filepath)/(1024.*1024.)
     filebase = os.path.basename(filepath)
     timing_rec  = OrderedDict([ ('run_time', timestamp),
@@ -250,23 +254,12 @@ def dump_flight_attributes(flight):
             print a.name+':', a.value
 
 
-def get_flight_record(source_file, output_path_and_file, registration, aircraft_info, flight, approach, kti):
-    '''build a record-per-flight summary from the base analysis
-        to do: add operator field.  
-               add weather?
-               match FFD or ASIAS field names?
-               
-               reference KTIs:   
-                       'Liftoff'             = LIFTOFF_MIN
-                       'Top of Climb' (min)  = TOP_OF_CLIMB_MIN
-                       'Top of Descent' (max)= TOP_OF_DESCENT_MIN
-                       'Touchdown'           = TOUCHDOWN_MIN
-                     ''
-        
-    '''
+def get_flight_record(source_file, output_path_and_file, registration, aircraft_info, flight, approach, kti, file_repository='central'):
+    '''build a record-per-flight summary from the base analysis    '''
     flight_file = source_file
     base_file = os.path.basename(output_path_and_file)
-    flt = OrderedDict([ ('source_file',flight_file), ('file_path', output_path_and_file), ('base_file_path', base_file), 
+    flt = OrderedDict([ ('file_repository',file_repository), ('source_file',flight_file), 
+                        ('file_path', output_path_and_file), ('base_file_path', base_file), 
                         ('tail_number',registration), ('fleet_series', aircraft_info['Series']), ])    
                         
     attr = dict([(a.name, a.value) for a in flight])
@@ -341,7 +334,9 @@ def get_flight_record(source_file, output_path_and_file, registration, aircraft_
 
 def save_flight_record(cn, flight_record, OUTPUT_DIR, output_path_and_file):
      record_to_csv(flight_record.values(), OUTPUT_DIR+'flight_record.csv')
-     dsql= """delete from fds_flight_record where source_file='SRC'""".replace('SRC', flight_record['source_file'])
+     repo = flight_record['file_repository']
+     src = flight_record['source_file']
+     dsql= """delete from fds_flight_record where file_repository='REPO' and source_file='SRC'""".replace('REPO',repo).replace('SRC', src)
      oracle_execute(cn, dsql)
      with hdfaccess.file.hdf_file(output_path_and_file) as hfile:
          flight_record['recorded_parameters'] = ','.join(hfile.lfl_keys())
@@ -379,7 +374,7 @@ def csv_flight_measures(hdf_path, kti_list, kpv_list, phase_list, dest_path):
     return rows
 
 
-def kti_to_oracle(cn, profile, flight_file, output_path_and_file, kti):
+def kti_to_oracle(cn, profile, flight_file, output_path_and_file, kti, file_repository='central'):
     #node: index name datetime latitude longitude
     if profile=='base':
         base_file = os.path.basename(output_path_and_file)
@@ -393,7 +388,7 @@ def kti_to_oracle(cn, profile, flight_file, output_path_and_file, kti):
             rows.append( vals )    
         else:
             print 'suspect kti index', value.name, value.index
-    dsql= """delete from fds_kti where source_file='SRC' and profile='PROFILE'""".replace('PROFILE',profile).replace('SRC', flight_file)
+    dsql= """delete from fds_kti where file_repository='REPO' and source_file='SRC' and profile='PROFILE'""".replace('PROFILE',profile).replace('REPO',file_repository).replace('SRC', flight_file)
     oracle_execute(cn, dsql)
 
     isql = """insert /*append*/ into fds_kti (profile, source_file,  name,  time_index, base_file_path) 
@@ -402,7 +397,7 @@ def kti_to_oracle(cn, profile, flight_file, output_path_and_file, kti):
     oracle_executemany(cn, isql, rows)
 
 
-def kpv_to_oracle(cn, profile, flight_file, output_path_and_file, params, kpv):
+def kpv_to_oracle(cn, profile, flight_file, output_path_and_file, params, kpv, file_repository='central'):
     #node: 'index value name slice datetime latitude longitude'
     if profile=='base':
         base_file = os.path.basename(output_path_and_file)
@@ -418,13 +413,13 @@ def kpv_to_oracle(cn, profile, flight_file, output_path_and_file, params, kpv):
             units = None
         vals = [profile, flight_file, value.name, float(value.index), float(value.value), base_file, units ] 
         rows.append( vals )
-    dsql= """delete from fds_kpv where source_file='SRC' and profile='PROFILE'""".replace('PROFILE',profile).replace('SRC', flight_file)
+    dsql= """delete from fds_kpv where file_repository='REPO' and source_file='SRC' and profile='PROFILE'""".replace('PROFILE',profile).replace('REPO',file_repository).replace('SRC', flight_file)
     oracle_execute(cn, dsql)
     isql = """insert /*append*/ into fds_kpv (profile, source_file,  name,  time_index,  value,  base_file_path,  units) 
                                     values (:profile, :source_file, :name, :time_index, :value, :base_file_path, :units)"""
     oracle_executemany(cn, isql, rows)
     
-def phase_to_oracle(cn, profile, flight_file, output_path_and_file, phase_list):
+def phase_to_oracle(cn, profile, flight_file, output_path_and_file, phase_list, file_repository='central'):
     #node: 'name slice start_edge stop_edge'
     if profile=='base':
         base_file = os.path.basename(output_path_and_file)
@@ -434,7 +429,7 @@ def phase_to_oracle(cn, profile, flight_file, output_path_and_file, phase_list):
     for value in phase_list:
         vals = [profile, flight_file, value.name, float(value.start_edge), float(value.stop_edge), value.stop_edge-value.start_edge, base_file ]                
         rows.append( vals )
-    dsql= """delete from fds_phase where source_file='SRC' and profile='PROFILE'""".replace('PROFILE',profile).replace('SRC', flight_file)
+    dsql= """delete from fds_kpv where file_repository='REPO' and source_file='SRC' and profile='PROFILE'""".replace('PROFILE',profile).replace('REPO',file_repository).replace('SRC', flight_file)
     oracle_execute(cn, dsql)
     isql = """insert /*append*/ into fds_phase (profile, source_file,  name,  time_index,  stop_edge, duration, base_file_path) 
                                     values (:profile, :source_file, :name,   :time_index, :stop_edge, :duration, :base_file_path)"""
@@ -852,87 +847,6 @@ def derive_parameters_mitre(hdf, node_mgr, process_order, precomputed_parameters
     return kti_list, kpv_list, section_list, approach_list, flight_attrs, params
 
 
-def derive_parameters_mitreXXX(hdf, node_mgr, process_order, precomputed_parameters):
-    '''  replacement for process_flight.derived_parameters(), to allow re-use of KTI, section, KPV from analyzer.
-    Derives the parameter values and if limits are available, applies
-    parameter validation upon each param before storing the resulting masked array back into the hdf file.
-    
-    :param hdf: Data file accessor used to get and save parameter data and attributes; 
-    :type hdf: hdf_file
-    :param node_mgr: Used to determine the type of node in the process_order
-    :type node_mgr: NodeManager
-    :param process_order: Parameter / Node class names in the required order to be processed
-    :type process_order: list of strings
-    '''
-    params    = precomputed_parameters   # dictionary of derived params that aren't masked arrays
-    duration  = hdf.duration
-	
-    # containers for storing newly computed output 
-    paramst       = {'flight_attrs':[], 'approaches':[], 'KTI':[], 'sections':[], 'KPV':[] }
-    
-    for param_name in process_order:
-        if param_name in node_mgr.hdf_keys:
-            logger.debug('  derive_: hdf '+param_name)            
-            continue        
-        elif node_mgr.get_attribute(param_name) is not None:
-            logger.debug('  derive_: get_attribute '+param_name)
-            continue
-        elif param_name in params:  # already calculated KPV/KTI/Phase ***********************NEW
-            logger.debug('  derive_parameters: re-using '+param_name)
-            continue
-        logger.debug('  derive_: computing '+param_name)
-
-        #logger.info("Processing parameter %s", param_name)
-        node_class = node_mgr.derived_nodes[param_name]  #NB raises KeyError if Node is "unknown"      
-        deps       = build_ordered_dependencies(node_class, node_mgr, params, hdf)
-        node       = node_class()
-        result     = node.get_derived(deps)
-
-        # store results for re-use and reporting --  KTI, KPV no longer aligned to 1 hz, to support round-trip loading from db
-        #   	will this break reporting, e.g. KML export?
-        if node.node_type is KeyPointValueNode:
-            params[param_name] = result
-            for kpv in result:
-                paramst['KPV'].append(kpv)
-			
-        elif node.node_type is KeyTimeInstanceNode:
-            params[param_name] = result
-            logger.debug('KTI'+ param_name+ str(result)   )
-            for kti in result:
-                paramst['KTI'].append(kti)
-			
-        elif node.node_type is FlightAttributeNode:
-            params[param_name] = result
-            try:
-                paramst['flight_attrs'].append(Attribute(result.name, result.value)) # only has one Attribute result
-            except:
-                logger.warning("Flight Attribute Node '%s' returned empty handed.", param_name)
-
-        elif issubclass(node.node_type, SectionNode):
-		aligned_section = align_section(result, duration)
-		params[param_name] = aligned_section
-		for one_hz in aligned_section:
-			paramst['sections'].append(one_hz)
-
-        elif issubclass(node.node_type, DerivedParameterNode):
-            #left as-is.  just refactored the length mgt into a function
-            if duration:
-                result =  manage_parameter_length(param_name, duration, result) 
-            hdf.set_param(result)
-            node_mgr.hdf_keys.append(param_name)              # Keep hdf_keys up to date.
-			
-        elif issubclass(node.node_type, ApproachNode):
-            #left as-is.  just refactored the length mgt into a function
-            aligned_approach = result.get_aligned(P(frequency=1, offset=0))
-            for approach in result:
-                check_approach(approach, duration)
-                paramst['approaches'].append(approach)
-            params[param_name] = aligned_approach
-        else:
-            raise NotImplementedError("Unknown Type %s" % node.__class__)
-        continue
-    return params, paramst #kti_list, kpv_list, section_list, approach_list, flight_attrs
-
 def dump_pickles(output_path_and_file, params, kti, kpv, phases, approach, flight_attrs, logger):
     #dump params to pickle file -- versioned
     pkl_end = pkl_suffix()
@@ -958,7 +872,8 @@ def run_analyzer(short_profile,    module_names,
                  logger,           files_to_process, 
                  input_dir,        output_dir,       reports_dir, 
                  include_flight_attributes=False, 
-                 make_kml=False,   save_oracle=True, comment=''):    
+                 make_kml=False,   save_oracle=True, comment='',
+                 file_repository='central'):    
     '''
     run FlightDataAnalyzer for analyze and profile. mostly file mgmt and reporting.
     '''        
@@ -1024,11 +939,11 @@ def run_analyzer(short_profile,    module_names,
         report_timing(timestamp, stage, short_profile, flight_path_and_file, processing_time, status, logger, cn)
 
         if save_oracle and status=='ok':
-            kti_to_oracle(cn, short_profile, flight_file, output_path_and_file, kti)
-            phase_to_oracle(cn, short_profile, flight_file, output_path_and_file, phases)
-            kpv_to_oracle(cn, short_profile, flight_file, output_path_and_file, params, kpv)
+            kti_to_oracle(cn, short_profile, flight_file, output_path_and_file, kti, file_repository)
+            phase_to_oracle(cn, short_profile, flight_file, output_path_and_file, phases, file_repository)
+            kpv_to_oracle(cn, short_profile, flight_file, output_path_and_file, params, kpv, file_repository)
             if short_profile=='base':  # for base analyze, store flight record
-                 flight_record = get_flight_record(flight_file, output_path_and_file, registration, aircraft_info, flight_attrs, approach, kti) # an OrderedDict
+                 flight_record = get_flight_record(flight_file, output_path_and_file, registration, aircraft_info, flight_attrs, approach, kti, file_repository) # an OrderedDict
                  save_flight_record(cn, flight_record, output_dir, output_path_and_file)                     
             logger.debug('done ora out')
         if status=='ok' and make_kml:
@@ -1040,3 +955,22 @@ def run_analyzer(short_profile,    module_names,
     for handler in logger.handlers: handler.close()        
     return aircraft_info
     
+
+def run_profile(profile_name, module_names, LOG_LEVEL, FILES_TO_PROCESS, COMMENT, MAKE_KML_FILES, FILE_REPOSITORY='central' ):
+    save_oracle = True
+    reports_dir = settings.PROFILE_REPORTS_PATH
+    logger = initialize_logger(LOG_LEVEL)
+    # Determine module names so FlightDataAnalyzer knows what nodes it is working with. Must be in PYTHON_PATH.
+    #  Normally we are just passing the current profile, but we could also send a list of profiles.
+    logger.warning('profile: '+profile_name)
+    output_dir = settings.PROFILE_DATA_PATH + profile_name+'/' 
+    if not os.path.exists(output_dir): os.makedirs(output_dir)
+
+    run_analyzer(profile_name, module_names, 
+             logger, FILES_TO_PROCESS, 
+             'NA', output_dir, reports_dir, 
+             include_flight_attributes=False, 
+             make_kml=MAKE_KML_FILES, 
+             save_oracle=save_oracle,
+             comment=COMMENT,
+             file_repository=FILE_REPOSITORY)   

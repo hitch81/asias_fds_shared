@@ -113,3 +113,9 @@ alter table fds_flight_record add (
    TOP_OF_DESCENT_MIN number,
    TOUCHDOWN_MIN number
  );
+
+
+alter table fds_kpv add (file_repository varchar2(128));
+alter table fds_kpv add (profile_set varchar2(96));
+
+update fds_phase set profile_set='base' where profile='base'
