@@ -911,8 +911,8 @@ def run_analyzer(short_profile,    module_names,
         aircraft_info['Tail Number'] = registration
         logger.debug(aircraft_info)
         logger.debug(' *** Processing flight %s', flight_file)
-        #try: 
-        if True:
+        try: 
+            #if True:
             derived_nodes_copy = copy.deepcopy(derived_nodes)
             series_copy = series_keys[:]
             with hdf_file(output_path_and_file) as hdf:
@@ -925,12 +925,12 @@ def run_analyzer(short_profile,    module_names,
                 kti, kpv, phases, approach, flight_attrs, params = derive_parameters_mitre(hdf, node_mgr, process_order, precomputed_parameters)                
             if short_profile=='base': dump_pickles(output_path_and_file, params, kti, kpv, phases, approach, flight_attrs, logger)
             status='ok'
-#        except:
-#            ex_type, ex, tracebck = sys.exc_info()
-#            logger.warning('ANALYZER ERROR '+flight_file)
-#            traceback.print_tb(tracebck)
-#            status='failed'
-#            del tracebck                
+        except:
+            ex_type, ex, tracebck = sys.exc_info()
+            logger.warning('ANALYZER ERROR '+flight_file)
+            traceback.print_tb(tracebck)
+            status='failed'
+            del tracebck                
 
         logger.info(' *** Processing flight %s finished ' + flight_file + ' time: ' + str(time.time()-file_start_time) + 'status: '+status)
         # reports
