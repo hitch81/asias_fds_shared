@@ -383,7 +383,7 @@ def kti_to_oracle(cn, profile, flight_file, output_path_and_file, kti, file_repo
         
     rows = []    
     for value in kti:
-        vals = [profile, flight_file, value.name, float(value.index), base_file]
+        vals = [profile, flight_file, value.name, float(value.index), base_file, file_repository]
         if value.index and value.index>=0:
             rows.append( vals )    
         else:
@@ -391,8 +391,8 @@ def kti_to_oracle(cn, profile, flight_file, output_path_and_file, kti, file_repo
     dsql= """delete from fds_kti where file_repository='REPO' and source_file='SRC' and profile='PROFILE'""".replace('PROFILE',profile).replace('REPO',file_repository).replace('SRC', flight_file)
     oracle_execute(cn, dsql)
 
-    isql = """insert /*append*/ into fds_kti (profile, source_file,  name,  time_index, base_file_path) 
-                                    values (:profile, :source_file, :name, :time_index, :base_file_path)"""                
+    isql = """insert /*append*/ into fds_kti (profile, source_file,  name,  time_index, base_file_path, file_repository) 
+                                    values (:profile, :source_file, :name, :time_index, :base_file_path, :file_repository)"""                
     #pdb.set_trace()
     oracle_executemany(cn, isql, rows)
 
@@ -411,12 +411,12 @@ def kpv_to_oracle(cn, profile, flight_file, output_path_and_file, params, kpv, f
             #print 'Units ', units
         except:
             units = None
-        vals = [profile, flight_file, value.name, float(value.index), float(value.value), base_file, units ] 
+        vals = [profile, flight_file, value.name, float(value.index), float(value.value), base_file, units, file_repository ] 
         rows.append( vals )
     dsql= """delete from fds_kpv where file_repository='REPO' and source_file='SRC' and profile='PROFILE'""".replace('PROFILE',profile).replace('REPO',file_repository).replace('SRC', flight_file)
     oracle_execute(cn, dsql)
-    isql = """insert /*append*/ into fds_kpv (profile, source_file,  name,  time_index,  value,  base_file_path,  units) 
-                                    values (:profile, :source_file, :name, :time_index, :value, :base_file_path, :units)"""
+    isql = """insert /*append*/ into fds_kpv (profile, source_file,  name,  time_index,  value,  base_file_path,  units, file_repository) 
+                                    values (:profile, :source_file, :name, :time_index, :value, :base_file_path, :units, :file_repository)"""
     oracle_executemany(cn, isql, rows)
     
 def phase_to_oracle(cn, profile, flight_file, output_path_and_file, phase_list, file_repository='central'):
@@ -427,12 +427,12 @@ def phase_to_oracle(cn, profile, flight_file, output_path_and_file, phase_list, 
         base_file=os.path.basename(flight_file)
     rows = []    
     for value in phase_list:
-        vals = [profile, flight_file, value.name, float(value.start_edge), float(value.stop_edge), value.stop_edge-value.start_edge, base_file ]                
+        vals = [profile, flight_file, value.name, float(value.start_edge), float(value.stop_edge), value.stop_edge-value.start_edge, base_file, file_repository ]                
         rows.append( vals )
     dsql= """delete from fds_kpv where file_repository='REPO' and source_file='SRC' and profile='PROFILE'""".replace('PROFILE',profile).replace('REPO',file_repository).replace('SRC', flight_file)
     oracle_execute(cn, dsql)
-    isql = """insert /*append*/ into fds_phase (profile, source_file,  name,  time_index,  stop_edge, duration, base_file_path) 
-                                    values (:profile, :source_file, :name,   :time_index, :stop_edge, :duration, :base_file_path)"""
+    isql = """insert /*append*/ into fds_phase (profile, source_file,  name,  time_index,  stop_edge, duration, base_file_path, file_repository) 
+                                    values (:profile, :source_file, :name,   :time_index, :stop_edge, :duration, :base_file_path, :file_repository)"""
     oracle_executemany(cn, isql, rows)
 
              
@@ -956,8 +956,8 @@ def run_analyzer(short_profile,    module_names,
     return aircraft_info
     
 
-def run_profile(profile_name, module_names, LOG_LEVEL, FILES_TO_PROCESS, COMMENT, MAKE_KML_FILES, FILE_REPOSITORY='central' ):
-    save_oracle = True
+def run_profile(profile_name, module_names, LOG_LEVEL, FILES_TO_PROCESS, COMMENT, MAKE_KML_FILES, 
+                FILE_REPOSITORY='central', save_oracle=True ):
     reports_dir = settings.PROFILE_REPORTS_PATH
     logger = initialize_logger(LOG_LEVEL)
     # Determine module names so FlightDataAnalyzer knows what nodes it is working with. Must be in PYTHON_PATH.
