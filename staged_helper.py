@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-    Helper functions for foqa-test, adapted from FDS' LocalRunner
+    Helper functions for foqa-test, base and profile generation and reporting
     Created on Tue Apr 16 15:42:57 2013
     @author: KEITHC
 """
@@ -10,7 +10,6 @@ import cPickle as pickle
 from datetime import datetime
 from collections import OrderedDict
 import numpy as np
-#from analysis_engine.process_flight import process_flight
 from hdfaccess.file import hdf_file
 from analysis_engine import __version__ as analyzer_version # to check pickle files
 from analysis_engine import settings
@@ -59,6 +58,7 @@ def get_info_from_filename(source_filename, frame_dict):
             registration = source_filename.split('_')[0]            
     frame_details = frame_dict[registration]
     return root_filename, filename_extension, frame_details, registration
+
 
 def get_short_profile_name(myfile):
     '''peel off last level of folder names in path = profile name'''
@@ -147,7 +147,6 @@ def get_job_record(timestamp, stage, profile, comment, input_path, output_path, 
                         ('input_path', input_path), ('output_path', output_path),
                         ('file_count', file_count), ('processing_seconds', processing_seconds)
                      ])
-    #print rec
     return rec
     
 
@@ -175,8 +174,6 @@ def initialize_timing_report(REPORTS_DIR):
     '''for reporting run times '''
     timestamp = datetime.now()
     report_name = REPORTS_DIR + 'fds_processing_time.csv'
-    #with open(report_name, 'a') as timing_report:
-    #    timing_report.write( ','.join(TIMING_REPORT_FIELDS)+'\n' ) 
     return timestamp, report_name    
    
 
@@ -265,11 +262,9 @@ def get_flight_record(source_file, output_path_and_file, registration, aircraft_
     attr = dict([(a.name, a.value) for a in flight])
     flt['operator']= 'xxx'
     flt['analyzer_version'] = attr.get('FDR Version','')
-    flt['flight_type'] = attr.get('FDR Flight Type','')
-     
+    flt['flight_type'] = attr.get('FDR Flight Type','')     
     flt['analysis_time'] = attr.get('FDR Analysis Datetime',None)
     
-    #pdb.set_trace()    
     lift = [k.index for k in kti if k.name=='Liftoff']
     flt['liftoff_min']        = min(lift) if len(lift)>0 else None
     tclimb = [k.index for k in kti if k.name=='Top of Climb']
@@ -277,12 +272,7 @@ def get_flight_record(source_file, output_path_and_file, registration, aircraft_
     tdescent = [k.index for k in kti if k.name=='Top of Descent']
     flt['top_of_descent_min'] = min(tdescent) if len(tdescent)>0 else None
     tdown =[k.index for k in kti if k.name=='Touchdown']
-    flt['touchdown_min']      = min(tdown) if len(tdown)>0 else None
-    
-    #flt['off_blocks_time'] = attr.get('FDR Off Blocks Datetime',None)
-    #flt['takeoff_time']  = attr.get('FDR Takeoff Datetime',None)
-    #flt['landing_time']  = attr.get('FDR Landing Datetime',None)
-    #flt['on_blocks_time'] = attr.get('FDR On Blocks Datetime',None)
+    flt['touchdown_min']      = min(tdown) if len(tdown)>0 else None   
     flt['duration']       = attr.get('FDR Duration',None)
 
     if attr.get('FDR Takeoff Airport',None): #key must exist and contain a val other than None
@@ -318,7 +308,6 @@ def get_flight_record(source_file, output_path_and_file, registration, aircraft_
     landing_count=0; go_around_count=0; touch_and_go_count=0
     for appr in approach:
         atype = appr.type
-        #print 'approach type', atype
         if atype=='LANDING':        landing_count+=1
         elif atype=='GO_AROUND':    go_around_count+=1
         elif atype=='TOUCH_AND_GO': touch_and_go_count+=1
@@ -348,7 +337,7 @@ def save_flight_record(cn, flight_record, OUTPUT_DIR, output_path_and_file):
 #     The values saved to Oracle and csv's are in seconds, making them convenient for reporting.
 #     The values stored to pickle files maintain their original frequency and offset, for use with derive_parameters
 def flight_measures_header():
-    # KPV has value, KTI has lat/lon and datetime, phase has duration 
+    ''' KPV has value, KTI has lat/lon and datetime, phase has duration '''
     header = ['path', 'type', 'index', 'duration', 'name', 'value', 'datetime', 'latitude', 'longitude'] 
     return header
 
@@ -363,7 +352,7 @@ def initialize_flight_measures(OUTPUT_DIR, short_profile):
 
 
 def csv_flight_measures(hdf_path, kti_list, kpv_list, phase_list, dest_path):
-    # send flight details to CSV
+    ''' send flight details to CSV'''
     #print 'csv flight measures', hdf_path, dest_path
     header = flight_measures_header()
     rows = flight_measures(hdf_path, kti_list, kpv_list, phase_list)     
@@ -375,7 +364,7 @@ def csv_flight_measures(hdf_path, kti_list, kpv_list, phase_list, dest_path):
 
 
 def kti_to_oracle(cn, profile, flight_file, output_path_and_file, kti, file_repository='central'):
-    #node: index name datetime latitude longitude
+    '''node: index name datetime latitude longitude'''
     if profile=='base':
         base_file = os.path.basename(output_path_and_file)
     else:
@@ -397,7 +386,7 @@ def kti_to_oracle(cn, profile, flight_file, output_path_and_file, kti, file_repo
 
 
 def kpv_to_oracle(cn, profile, flight_file, output_path_and_file, params, kpv, file_repository='central'):
-    #node: 'index value name slice datetime latitude longitude'
+    '''node: index value name slice datetime latitude longitude'''
     if profile=='base':
         base_file = os.path.basename(output_path_and_file)
     else:
@@ -407,7 +396,6 @@ def kpv_to_oracle(cn, profile, flight_file, output_path_and_file, params, kpv, f
     for value in kpv:
         try:
             units = params.get(value.name).units
-            #print 'Units ', units
         except:
             units = None
         vals = [profile, flight_file, value.name, float(value.index), float(value.value), base_file, units, file_repository ] 
@@ -417,9 +405,10 @@ def kpv_to_oracle(cn, profile, flight_file, output_path_and_file, params, kpv, f
     isql = """insert /*append*/ into fds_kpv (profile, source_file,  name,  time_index,  value,  base_file_path,  units, file_repository) 
                                     values (:profile, :source_file, :name, :time_index, :value, :base_file_path, :units, :file_repository)"""
     oracle_executemany(cn, isql, rows)
+
     
 def phase_to_oracle(cn, profile, flight_file, output_path_and_file, phase_list, file_repository='central'):
-    #node: 'name slice start_edge stop_edge'
+    '''node: 'name slice start_edge stop_edge'''
     if profile=='base':
         base_file = os.path.basename(output_path_and_file)
     else:
@@ -454,10 +443,8 @@ def get_precomputed_parameters(flight_path_and_file, flight):
 
 
 def flight_measures(hdf_path, kti_list, kpv_list, phase_list):
-    """Adapted from FDS FlightDataAnalyzer/plot_flight.py csv_flight_details()
-        No HDF5 sourced values are included.
-        ?Return separate tables for KTI, KPV and Phase?
-    """
+    '''Adapted from FDS FlightDataAnalyzer/plot_flight.py csv_flight_details()
+        No HDF5 sourced values are included.'''
     rows = []
     
     for value in kti_list:
@@ -554,7 +541,7 @@ def prep_order(frame_dict, test_file, start_datetime, derived_nodes, required_pa
     
 
 def get_output_file(OUTPUT_DIR, flight_path_and_file, short_profile, write_hdf):
-    # if no new timeseries, just set output path  input path
+    ''' if no new timeseries, just set output path  input path'''
     if write_hdf:
         logger.debug('writing new hdf5')
         flight_file          = os.path.basename(flight_path_and_file)
@@ -566,9 +553,7 @@ def get_output_file(OUTPUT_DIR, flight_path_and_file, short_profile, write_hdf):
     return output_path_and_file 
 
 
-
 def build_ordered_dependencies(node_class, node_mgr, params, hdf):
-    # build ordered dependencies  
     deps = []
     node_deps = node_class.get_dependency_names()
     for dep_name in node_deps:
