@@ -393,7 +393,6 @@ def kti_to_oracle(cn, profile, flight_file, output_path_and_file, kti, file_repo
 
     isql = """insert /*append*/ into fds_kti (profile, source_file,  name,  time_index, base_file_path, file_repository) 
                                     values (:profile, :source_file, :name, :time_index, :base_file_path, :file_repository)"""                
-    #pdb.set_trace()
     oracle_executemany(cn, isql, rows)
 
 
