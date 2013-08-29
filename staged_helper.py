@@ -660,7 +660,7 @@ def get_deps(node_class, params, node_mgr, h5flight):
                 try:
                     #dp = series.get(dep_name)  ##########################################                    
                     dp = derived_param_from_hdf(h5flight.get_param(dep_name, valid_only=True))
-                    print 'derived hdf dep', dep_name
+                    #print 'derived hdf dep', dep_name
                 except KeyError:
                     # Parameter is invalid.
                     print 'key error hdf dep', dep_name
