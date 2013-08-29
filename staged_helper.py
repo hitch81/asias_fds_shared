@@ -666,8 +666,8 @@ def get_deps(node_class, params, node_mgr, h5flight):
                     print 'key error hdf dep', dep_name
                     dp = None
                 deps.append(dp)
-            elif dep_name in series.keys():
-                deps.append(series[dep_name])
+            #elif dep_name in series.keys():
+            #    deps.append(series[dep_name])
             else:  # dependency not available
                 deps.append(None)
         if all([d is None for d in deps]):
