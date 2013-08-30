@@ -632,7 +632,8 @@ def get_deps_series(node_class, params, node_mgr, series):
             elif dep_name in series.keys():
                 deps.append(series[dep_name])
             else:  # dependency not available
-                deps.append(None)
+                #deps.append(None)
+                return None
         if all([d is None for d in deps]):
             print deps
             raise RuntimeError("No dependencies available - Nodes cannot "
@@ -664,7 +665,8 @@ def get_deps(node_class, params, node_mgr, h5flight):
                 except KeyError:
                     # Parameter is invalid.
                     print 'key error hdf dep', dep_name
-                    dp = None
+                    #dp = None
+                    return None
                 deps.append(dp)
             #elif dep_name in series.keys():
             #    deps.append(series[dep_name])
@@ -891,7 +893,8 @@ def derive_parameters_mitre(hdf, node_mgr, process_order, precomputed_parameters
         logger.debug('  derive_: computing '+param_name)        
         node_class = node_mgr.derived_nodes[param_name]  #NB raises KeyError if Node is "unknown"        
         deps = get_deps(node_class, params, node_mgr, hdf)
-        
+        if deps is None: # e.g. if a required parameter is invalid
+            continue
         # initialise node
         node = node_class()
         logger.info("Processing parameter %s", param_name)
@@ -1082,7 +1085,7 @@ def run_analyzer(short_profile,    module_names,
         aircraft_info         = frame_dict[registration]
         aircraft_info['Tail Number'] = registration
         logger.debug(aircraft_info)
-        logger.debug(' *** Processing flight %s', flight_file)
+        logger.warning(' *** Processing flight %s', flight_file)
         #if True:
         try: 
             derived_nodes_copy = copy.deepcopy(derived_nodes)
@@ -1098,12 +1101,14 @@ def run_analyzer(short_profile,    module_names,
  
             if short_profile=='base': dump_pickles(output_path_and_file, params, kti, kpv, phases, approach, flight_attrs, logger)
             status='ok'
+        #'''
         except:
             ex_type, ex, tracebck = sys.exc_info()
             logger.warning('ANALYZER ERROR '+flight_file)
             traceback.print_tb(tracebck)
             status='failed'
             del tracebck                
+        #'''
         logger.info(' *** Processing flight %s finished ' + flight_file + ' time: ' + str(time.time()-file_start_time) + 'status: '+status)
         # reports
         stage = 'analyze' if short_profile=='base' else 'profile'    
