@@ -28,7 +28,7 @@ import hdfaccess.file
 
 import fds_oracle
 import fleets.frame_list as frame_list        # map of tail# to LFLs
-
+from fleets.frame_list import get_info_from_filename
 logger = logging.getLogger(__name__) #for process_short)_
 
 
@@ -38,28 +38,6 @@ def get_input_files(INPUT_DIR, file_suffix, logger):
     file_count = len(files_to_process)
     logger.warning('Processing '+str(file_count)+' files.')
     return files_to_process, file_count
-
-
-#  from LocalRunner/utils.py
-def get_info_from_filename(source_filename, frame_dict):
-    '''parse tail number from filename, then lookup aircraft info in framelist'''
-    #print 'source_filename: ', source_filename
-    root_filename = source_filename.split('.')[0]
-    filename_extension = source_filename.split('.')[-1]
-
-
-    if filename_extension[0] == '0':
-        registration = root_filename.split('_')[2]
-    elif filename_extension == 'COP' or filename_extension in ['hdf', 'hdf5']:
-        registration = source_filename.split('_')[0]
-        if len(registration) < 5:
-            registration = source_filename.split('_')[2]
-    else:
-        registration = source_filename.split('_')[0]
-        if registration == '':
-            registration = source_filename.split('_')[0]            
-    frame_details = frame_dict[registration]
-    return root_filename, filename_extension, frame_details, registration
 
 
 def get_short_profile_name(myfile):
