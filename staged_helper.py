@@ -5,7 +5,7 @@
     @author: KEITHC
 """
 import pdb
-import sys, traceback, os, glob, shutil, logging, time, copy, platform
+import sys, traceback, os, glob, shutil, logging, time, copy
 import cPickle as pickle
 from datetime import datetime
 from collections import OrderedDict
@@ -14,7 +14,7 @@ from hdfaccess.file import hdf_file
 from analysis_engine import __version__ as analyzer_version # to check pickle files
 from analysis_engine import settings
 from analysis_engine.library import np_ma_masked_zeros_like
-from analysis_engine.dependency_graph import dependency_order, graph_adjacencies
+from analysis_engine.dependency_graph import dependency_order
 from analysis_engine.node import (ApproachNode, Attribute,
                                   derived_param_from_hdf,
                                   DerivedParameterNode,
@@ -23,7 +23,7 @@ from analysis_engine.node import (ApproachNode, Attribute,
                                   KeyTimeInstanceNode, Node,
                                   NodeManager, P, Section, SectionNode)
 import analysis_engine.node as node
-from analysis_engine.process_flight import get_derived_nodes, derive_parameters, geo_locate, _timestamp
+from analysis_engine.process_flight import get_derived_nodes, geo_locate, _timestamp
 import hdfaccess.file
 
 import fds_oracle
