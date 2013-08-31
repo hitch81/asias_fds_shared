@@ -27,7 +27,7 @@ from analysis_engine.process_flight import get_derived_nodes, derive_parameters,
 import hdfaccess.file
 
 import fds_oracle
-import frame_list        # map of tail# to LFLs
+import fleets.frame_list as frame_list        # map of tail# to LFLs
 
 logger = logging.getLogger(__name__) #for process_short)_
 
@@ -1152,3 +1152,7 @@ def run_profile(profile_name, module_names, LOG_LEVEL, FILES_TO_PROCESS, COMMENT
              save_oracle=save_oracle,
              comment=COMMENT,
              file_repository=FILE_REPOSITORY)   
+
+
+if __name__=='__main__':
+    print 'loaded'
