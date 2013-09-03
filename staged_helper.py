@@ -1112,7 +1112,9 @@ def run_analyzer(short_profile,    module_names,
     return aircraft_info
     
 
-def run_profile(profile_name, module_names, LOG_LEVEL, FILES_TO_PROCESS, COMMENT, MAKE_KML_FILES, 
+def run_profile(profile_name, module_names, 
+                LOG_LEVEL, FILES_TO_PROCESS, 
+                COMMENT, MAKE_KML_FILES, 
                 FILE_REPOSITORY='central', save_oracle=True ):
     reports_dir = settings.PROFILE_REPORTS_PATH
     logger = initialize_logger(LOG_LEVEL)
