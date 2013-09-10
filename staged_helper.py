@@ -552,9 +552,10 @@ class Flight(object):
         self.duration = None
         self.start_datetime= None
         self.aircraft_info = {}            
-        self.series = {}         #dict of ParameterNode         
-        self.invalid_series = {} #dict of ParameterNode marked invalid
+        self.series = {}         #dict of hdfaccess.Parameter        
+        self.invalid_series = {} #dict of hdfaccess.Parameter marked invalid
         self.lfl_params = []
+        self.parameters = {}     #dict of ParameterNodes
         #maybe add params, kpv, phase etc. later
         
     def load_from_hdf5(self, flight_dict):
@@ -577,12 +578,16 @@ class Flight(object):
                     self.lfl_params.append(s)
             for s in ff.keys():
                 if ff[s].invalid and ff[s].invalid==True:
-                    self.invalid_series[s] = node.derived_param_from_hdf(ff.get_param(s, valid_only=False))   
+                    #self.invalid_series[s] = node.derived_param_from_hdf(ff.get_param(s, valid_only=False))   
+                    self.invalid_series[s] = ff.get_param(s, valid_only=False)   
                 else:
                     #print s, ff.get(s).units
-                    param = node.derived_param_from_hdf(ff.get_param(s, valid_only=True))
-                    param.units = ff.get(s).units
+                    param = ff.get_param(s, valid_only=True)
                     self.series[s] = param
+                
+                    param_node = node.derived_param_from_hdf(param)
+                    param_node.units = ff.get(s).units
+                    self.parameters[s] = param_node
     
     def __repr__(self):
         s='class Flight'
@@ -592,6 +597,7 @@ class Flight(object):
         s = s+ '\n  series:         ' + str(self.series.keys()[:3]) + '...'
         s = s+ '\n  invalid_series: ' + str(self.invalid_series.keys()[:3]) + '...'
         s = s+ '\n  aircraft_info:  ' + str(self.aircraft_info)
+        s = s+ '\n  parameter nodes:  ' + str(self.parameters.keys()[:3]) + '...'
         return s
 
 
@@ -610,8 +616,8 @@ def get_deps_series(node_class, params, node_mgr, series):
             elif dep_name in series.keys():
                 deps.append(series[dep_name])
             else:  # dependency not available
-                #deps.append(None)
-                return None
+                deps.append(None)
+                #return None
         if all([d is None for d in deps]):
             print deps
             raise RuntimeError("No dependencies available - Nodes cannot "
@@ -779,11 +785,10 @@ def derive_parameters_series(flight, node_mgr, process_order, precomputed={}):
             logger.info('_derive_: re-using derived'+param_name)
             continue
 
-
         ####compute###########################################################    
         logger.debug('_derive_: computing '+param_name)        
         node_class = node_mgr.derived_nodes[param_name]  #NB raises KeyError if Node is "unknown"
-        deps = get_deps_series(node_class, params, node_mgr, flight.series )  
+        deps = get_deps_series(node_class, params, node_mgr, flight.parameters )  
         node = node_class()
         # Derive the resulting value
         if param_name =="Configuration":
@@ -833,7 +838,7 @@ def derive_parameters_series(flight, node_mgr, process_order, precomputed={}):
             raise NotImplementedError("Unknown Type %s" % node.__class__)
         continue
     return res, params
-
+ 
 
 def derive_parameters_mitre(hdf, node_mgr, process_order, precomputed_parameters={}):
     '''
