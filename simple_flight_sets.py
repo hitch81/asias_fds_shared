@@ -29,6 +29,16 @@ def _flight_set_dataframe(files_to_process, aircraft_info, repo):
     flight_set['aircraft_info']=[{'Frame': 'B737-300_specimen', 'Manufacturer': 'Boeing', 'Precise Positioning': True, 'Series': 'B737-300', 'Family': 'B737', 'Frame Doubled': False} for f in files_to_process]
     return flight_set
 
+def ffd897():
+    '''quick test set'''
+    input_dir  = settings.FFD_PATH + 'ffd40/'
+    print input_dir
+    files_to_process = glob.glob(os.path.join(input_dir, '*.ffd'))
+    repo='keith'
+    aircraft_info =  {'Frame':'FFD', 'Manufacturer':'Bombardier', 'Precise Positioning':True, 'Series': 'CRJ 700',  'Frame Doubled':False}
+    return _flight_list(files_to_process, aircraft_info, repo)
+
+
 def specimen_flight():
     '''FDS Specimen Flight, a partial 737-300 64wps frame'''
     input_dir  = settings.BASE_DATA_PATH + 'specimen_flight/'
