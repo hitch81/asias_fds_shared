@@ -27,8 +27,8 @@ from analysis_engine.process_flight import get_derived_nodes, geo_locate, _times
 import hdfaccess.file
 
 import fds_oracle
-import fleets.frame_list as frame_list        # map of tail# to LFLs
-from fleets.frame_list import get_info_from_filename
+import frame_list # map of tail# to LFLs
+from frame_list import get_info_from_filename
 logger = logging.getLogger(__name__) #for process_short)_
 
 
@@ -224,6 +224,7 @@ def dict_to_oracle(cn, mydict, table):
     cols = ','.join(mydict.keys())
     colsyms = ','.join([':'+k for k in mydict.keys()])
     isql = """insert /*append*/ into TABLE (COLS) values (SYMS)""".replace('TABLE',table).replace('COLS',cols).replace('SYMS',colsyms)           
+    #pdb.set_trace()
     oracle_execute(cn, isql, mydict.values())
         
 
@@ -239,9 +240,10 @@ def dump_flight_attributes(flight):
             print a.name+':', a.value
 
 
-def get_flight_record(source_file, output_path_and_file, registration, aircraft_info, flight, approach, kti, file_repository='central'):
+def get_flight_record(source_file, output_path_and_file,aircraft_info, flight, approach, kti, file_repository='central'):
     '''build a record-per-flight summary from the base analysis    '''
     flight_file = source_file
+    registration = aircraft_info['Tail Number'] 
     base_file = os.path.basename(output_path_and_file)
     flt = OrderedDict([ ('file_repository',file_repository), ('source_file',flight_file), 
                         ('file_path', output_path_and_file), ('base_file_path', base_file), 
@@ -315,8 +317,8 @@ def save_flight_record(cn, flight_record, OUTPUT_DIR, output_path_and_file):
      src = flight_record['source_file']
      dsql= """delete from fds_flight_record where file_repository='REPO' and source_file='SRC'""".replace('REPO',repo).replace('SRC', src)
      oracle_execute(cn, dsql)
-     with hdfaccess.file.hdf_file(output_path_and_file) as hfile:
-         flight_record['recorded_parameters'] = ','.join(hfile.lfl_keys())
+     #with hdfaccess.file.hdf_file(output_path_and_file) as hfile:
+     #    flight_record['recorded_parameters'] = ','.join(hfile.lfl_keys())
      dict_to_oracle(cn, flight_record, 'fds_flight_record')
      logger.debug(flight_record)
      
@@ -504,12 +506,13 @@ def prep_nodes(short_profile, module_names, include_flight_attributes):
 
 def prep_order(frame_dict, test_file, start_datetime, derived_nodes, required_params):
     ''' open example HDF to see recorded params and build process order'''
-    _, _, _, registration = get_info_from_filename(os.path.basename(test_file), frame_dict)
-    aircraft_info         = frame_dict[registration]
+    aircraft_info = get_aircraft_info(os.path.basename(test_file), frame_dict)
+    #_, _, _, registration = get_info_from_filename(os.path.basename(test_file), frame_dict)
+    #aircraft_info         = frame_dict[registration]
 
     with hdf_file(test_file) as hdf:
         # get list of all valid parameters: recorded or previously derived
-        # Also, this ignores 'invalid' parameter attribute.  Unclear where that is set, and process_flight.derive_parameters() chks for it
+        # Also, this ignores 'invalid' parameter attribute.  process_flight.derive_parameters() chks for it
         series_keys = hdf.valid_param_names()[:]
         check_duration = hdf.duration
 
@@ -552,6 +555,7 @@ class Flight(object):
         self.duration = None
         self.start_datetime= None
         self.aircraft_info = {}            
+        self.achieved_flight_record = {}            
         self.series = {}         #dict of hdfaccess.Parameter        
         self.invalid_series = {} #dict of hdfaccess.Parameter marked invalid
         self.lfl_params = []
@@ -604,9 +608,11 @@ class Flight(object):
 def get_deps_series(node_class, params, node_mgr, series):
         # build ordered dependencies without touching hdf file
         # 'params' is a dictionary of previously computed nodes
+        #print 'series keys:', sorted(series.keys())        
         deps = []
         node_deps = node_class.get_dependency_names()
-        #if DEBUG: print '  dependencies: ', node_deps
+        #logger.debug('get_deps_series  dependencies: '+ str(node_deps))
+        #print 'get_deps_series  dependencies: '+ str(node_deps)
         for dep_name in node_deps:
             #print dep_name, (dep_name in node_mgr.hdf_keys)
             if dep_name in params:  # already calculated KPV/KTI/Phase
@@ -838,7 +844,7 @@ def derive_parameters_series(flight, node_mgr, process_order, precomputed={}):
             raise NotImplementedError("Unknown Type %s" % node.__class__)
         continue
     return res, params
- 
+
 
 def derive_parameters_mitre(hdf, node_mgr, process_order, precomputed_parameters={}):
     '''
@@ -1024,7 +1030,19 @@ def dump_pickles(output_path_and_file, params, kti, kpv, phases, approach, fligh
 
 ###################################################################################################
 
-        
+def get_aircraft_info(flight_file, frame_dict):
+    print flight_file
+    if flight_file.find('_ffd.hdf5')>=0:
+        # temporary test values; tail number is a dummy
+        aircraft_info =  {'Frame':'FFD', 'Manufacturer':'Bombardier', 'Precise Positioning':True, 
+                          'Family': 'CRJ',  'Series': 'CRJ 700',  'Frame Doubled':False,
+                          'Tail Number':'FFD40'}
+    else:
+        _, _, _, registration = get_info_from_filename(flight_file, frame_dict)
+        aircraft_info         = frame_dict[registration]
+        aircraft_info['Tail Number'] = registration
+    return aircraft_info                
+
         
 def run_analyzer(short_profile,    module_names,
                  logger,           files_to_process, 
@@ -1064,9 +1082,11 @@ def run_analyzer(short_profile,    module_names,
         logger.debug('starting '+ flight_file)
         output_path_and_file  = get_output_file(output_dir, flight_path_and_file, short_profile, write_hdf)
 
-        _, _, _, registration = get_info_from_filename(flight_file, frame_dict)
-        aircraft_info         = frame_dict[registration]
-        aircraft_info['Tail Number'] = registration
+        #_, _, _, registration = get_info_from_filename(flight_file, frame_dict)
+        #aircraft_info         = frame_dict[registration]
+        #aircraft_info['Tail Number'] = registration
+        aircraft_info = get_aircraft_info(flight_file, frame_dict)        
+        
         logger.debug(aircraft_info)
         logger.warning(' *** Processing flight %s', flight_file)
         #if True:
@@ -1103,7 +1123,7 @@ def run_analyzer(short_profile,    module_names,
             phase_to_oracle(cn, short_profile, flight_file, output_path_and_file, phases, file_repository)
             kpv_to_oracle(cn, short_profile, flight_file, output_path_and_file, params, kpv, file_repository)
             if short_profile=='base':  # for base analyze, store flight record
-                 flight_record = get_flight_record(flight_file, output_path_and_file, registration, aircraft_info, flight_attrs, approach, kti, file_repository) # an OrderedDict
+                 flight_record = get_flight_record(flight_file, output_path_and_file, aircraft_info, flight_attrs, approach, kti, file_repository) # an OrderedDict
                  save_flight_record(cn, flight_record, output_dir, output_path_and_file)                     
             logger.debug('done ora out')
         if status=='ok' and make_kml:
