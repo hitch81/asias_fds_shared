@@ -1047,7 +1047,7 @@ def run_analyzer(short_profile,    module_names,
             for k in series.keys():
                 if k.upper().find('TEMPORARY')<0:  #don't save temporary time series
                     flight.parameters[k] = series[k]
-            if short_profile=='base' or write_hdf:
+            if short_profile=='base': # or write_hdf:
                 flight.save_to_hdf5(output_path_and_file)
             if short_profile=='base': dump_pickles(output_path_and_file, params, kti, kpv, phases, approach, flight_attrs, logger)
             status='ok'
