@@ -418,21 +418,19 @@ class Flight(object):
             self.superframe_present = ff.superframe_present 
             self.hdfaccess_version =  ff.hdfaccess_version 
             self.reliable_frame_counter = ff.reliable_frame_counter 
-            # load valid hdf series into ParameterNode objects, invalid series into a separate dict
-            for k in ff.keys():
-                if ff[k].lfl==1:
-                    self.lfl_params.append(k)
+            
             for k in ff.keys():
                 self.series[k] =  ff.get_param(k, valid_only=False)
-                #pdb.set_trace()
-                #if not ff[k].has_key('invalid') or (ff[k].invalid and (ff[k].invalid==False or ff[k].invalid==0)):
-                if self.series[k].invalid is None or  self.series[k].invalid==False or self.series[k].invalid==0:
+                if  self.series[k].lfl==1 or self.series[k].lfl==True:  
+                    self.lfl_params.append(k)                     
+                is_invalid =self.series[k].invalid
+                if is_invalid is None or is_invalid==False:
                     param_node = node.derived_param_from_hdf( self.series[k] )
-                    #pdb.set_trace()
-                    param_node.units = ff.get(k).units
-                    param_node.lfl = ff.get(k).lfl
-                    param_node.data_type = ff.get(k).data_type
+                    param_node.units = self.series[k].units #better
+                    param_node.lfl = self.series[k].lfl
+                    param_node.data_type =self.series[k].data_type 
                     self.parameters[k] = param_node
+
     
     def save_to_hdf5(self, hdf5_path):
         '''this will overwrite any existing file with the same name'''
@@ -1079,7 +1077,8 @@ def run_profile(profile_name, module_names,
     #  Normally we are just passing the current profile, but we could also send a list of profiles.
     logger.warning('profile: '+profile_name)
     output_dir = settings.PROFILE_DATA_PATH + profile_name+'/' 
-    if not os.path.exists(output_dir): os.makedirs(output_dir)
+    if not os.path.exists(output_dir): 
+        os.makedirs(output_dir)
 
     print 'calling run_analyzer'
     run_analyzer(profile_name, module_names, 
