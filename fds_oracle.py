@@ -5,10 +5,11 @@ Database routines -- Oracle
 @author: keithc
 """
 import os
+import time
+from datetime import datetime
 from collections import OrderedDict
 import cx_Oracle as ora
 import analyser_custom_settings
-
 
 def get_connection():
     ''' connect to Oracle
@@ -93,32 +94,43 @@ def analyzer_to_oracle(cn, short_profile, res, params, flight, output_dir, outpu
         phase_to_oracle(cn, short_profile, flight_file, output_path_and_file, res['phase'], file_repository)
         kpv_to_oracle(cn, short_profile, flight_file, output_path_and_file, params, res['kpv'], file_repository)
         if short_profile=='base':  # for base analyze, store flight record
-             flight_record = get_flight_record(flight.filepath, output_path_and_file, flight.aircraft_info, res['attr'], res['approach'], res['kti'], file_repository) # an OrderedDict
+             flight_record = get_flight_record(flight.filepath , flight.start_datetime, flight.aircraft_info, output_path_and_file, res['attr'], res['approach'], res['kti'], file_repository) # an OrderedDict
              save_flight_record(cn, flight_record, output_dir, output_path_and_file)                     
         #logger.debug('done ora out')
   
 
 
-def get_flight_record(source_file, output_path_and_file,aircraft_info, flight, approach, kti, file_repository='central'):
+def get_flight_record(flight_file, start_datetime, aircraft_info, output_path_and_file, flight_attr, approach, kti, file_repository='linux'):
     '''build a record-per-flight summary from the base analysis    '''
-    flight_file = source_file
     registration = aircraft_info['Tail Number'] 
+    source_file = os.path.basename(flight_file)
     base_file = os.path.basename(output_path_and_file)
-    flt = OrderedDict([ ('file_repository',file_repository), ('source_file',flight_file), 
+
+    st = start_datetime
+    stt=list(st.timetuple()[:])    
+    stt[2]=1 #ensure date of month = 1
+    dtmon = datetime(*stt[0:3])
+
+    flt = OrderedDict([ ('file_repository',file_repository), ('source_file',source_file), 
                         ('file_path', output_path_and_file), ('base_file_path', base_file), 
-                        ('tail_number',registration), ('fleet_series', aircraft_info['Series']), ])    
+                        ('tail_number',registration), 
+                        ('fleet_series', aircraft_info['Series']), 
+                        ('start_month',dtmon),
+                        ('operator', aircraft_info['Operator']),
+                        ('download_datestr', aircraft_info['Download Date']),
+            ])    
                         
-    attr = dict([(a.name, a.value) for a in flight])
-    flt['operator']= 'xxx'
+    attr = dict([(a.name, a.value) for a in flight_attr])
+    #flt['operator']= 'xxx'
     flt['analyzer_version'] = attr.get('FDR Version','')
     flt['flight_type'] = attr.get('FDR Flight Type','')     
     flt['analysis_time'] = attr.get('FDR Analysis Datetime',None)
     
     lift = [k.index for k in kti if k.name=='Liftoff']
     flt['liftoff_min']        = min(lift) if len(lift)>0 else None
-    tclimb = [k.index for k in kti if k.name=='Top of Climb']
+    tclimb = [k.index for k in kti if k.name=='Top Of Climb']
     flt['top_of_climb_min']   = min(tclimb) if len(tclimb)>0 else None
-    tdescent = [k.index for k in kti if k.name=='Top of Descent']
+    tdescent = [k.index for k in kti if k.name=='Top Of Descent']
     flt['top_of_descent_min'] = min(tdescent) if len(tdescent)>0 else None
     tdown =[k.index for k in kti if k.name=='Touchdown']
     flt['touchdown_min']      = min(tdown) if len(tdown)>0 else None   
@@ -170,9 +182,8 @@ def get_flight_record(source_file, output_path_and_file,aircraft_info, flight, a
     return flt
 
 
-
 def save_flight_record(cn, flight_record, OUTPUT_DIR, output_path_and_file):
-     record_to_csv(flight_record.values(), OUTPUT_DIR+'flight_record.csv')
+     #record_to_csv(flight_record.values(), OUTPUT_DIR+'flight_record.csv')
      repo = flight_record['file_repository']
      src = flight_record['source_file']
      dsql= """delete from fds_flight_record where file_repository='REPO' and source_file='SRC'""".replace('REPO',repo).replace('SRC', src)
@@ -183,7 +194,7 @@ def save_flight_record(cn, flight_record, OUTPUT_DIR, output_path_and_file):
      #logger.debug(flight_record)
 
 
-def kti_to_oracle(cn, profile, flight_file, output_path_and_file, kti, file_repository='central'):
+def kti_to_oracle(cn, profile, flight_file, output_path_and_file, kti, file_repository='linux'):
     '''node: index name datetime latitude longitude'''
     if profile=='base':
         base_file = os.path.basename(output_path_and_file)
@@ -205,7 +216,7 @@ def kti_to_oracle(cn, profile, flight_file, output_path_and_file, kti, file_repo
     oracle_executemany(cn, isql, rows)
 
 
-def kpv_to_oracle(cn, profile, flight_file, output_path_and_file, params, kpv, file_repository='central'):
+def kpv_to_oracle(cn, profile, flight_file, output_path_and_file, params, kpv, file_repository='linux'):
     '''node: index value name slice datetime latitude longitude'''
     if profile=='base':
         base_file = os.path.basename(output_path_and_file)
@@ -227,7 +238,7 @@ def kpv_to_oracle(cn, profile, flight_file, output_path_and_file, params, kpv, f
     oracle_executemany(cn, isql, rows)
 
     
-def phase_to_oracle(cn, profile, flight_file, output_path_and_file, phase_list, file_repository='central'):
+def phase_to_oracle(cn, profile, flight_file, output_path_and_file, phase_list, file_repository='linux'):
     '''node: 'name slice start_edge stop_edge'''
     if profile=='base':
         base_file = os.path.basename(output_path_and_file)
@@ -243,3 +254,88 @@ def phase_to_oracle(cn, profile, flight_file, output_path_and_file, phase_list, 
                                     values (:profile, :source_file, :name,   :time_index, :stop_edge, :duration, :base_file_path, :file_repository)"""
     oracle_executemany(cn, isql, rows)
 
+
+### job report 
+JOB_REPORT_FIELDS = ['run_time', 'stage',  'profile', 'cmt', 'input_path', 'output_path', 'file_count', 'processing_seconds']
+
+"""
+def get_job_record(timestamp, stage, profile, comment, input_path, output_path, file_count, processing_seconds, file_repository='central'):
+    '''return job info as an OrderedDict'''
+    #computer_name = platform.node()
+    rec = OrderedDict([ ('run_time', timestamp),    ('stage', stage), 
+                        ('profile', profile),       ('cmt', comment), ('file_repository',file_repository),
+                        ('input_path', input_path), ('output_path', output_path),
+                        ('file_count', file_count), ('processing_seconds', processing_seconds)
+                     ])
+    return rec
+"""    
+
+def report_job(timestamp,   stage, profile, comment,
+                         file_repository, input_path, output_path, 
+                         file_count, processing_seconds, logger,  db_connection=None):
+    '''save timing record to csv and oracle (if available)'''
+    #report_name = settings.PREP_REPORTS_PATH + 'fds_jobs.csv'        
+    job_rec = OrderedDict([ ('run_time', timestamp),    ('stage', stage), 
+                            ('profile', profile),       ('cmt', comment), 
+                            ('file_repository',file_repository),
+                            ('input_path', input_path), ('output_path', output_path),
+                            ('file_count', file_count), ('processing_seconds', processing_seconds)
+                          ]) 
+    print job_rec                                          
+    #with open(report_name,'a') as rpt:
+    #    rpt.write( ','.join([ str(v) for v in job_rec.values()]) + '\n') 
+    if db_connection:            
+        dict_to_oracle(db_connection, job_rec, 'fds_jobs')
+    logger.warning('\nJOB REPORT: \n' + '\n'.join([str(v) for v in job_rec.items()]) )
+
+
+### timing report
+TIMING_REPORT_FIELDS = ['run_time', 'stage',  'profile', 'cmt', 'source_file', 'file_size_meg', 'processing_seconds', 'epoch', 'status']
+
+def initialize_timing_report(REPORTS_DIR):
+    '''for reporting run times '''
+    timestamp = datetime.now()
+    #report_name = REPORTS_DIR + 'fds_processing_time.csv'
+    return timestamp #, report_name    
+   
+
+def report_timing(timestamp, stage, profile, filepath, 
+                  processing_time, status, logger, db_connection=None):
+    '''save timing record to csv and if oracle (if available)'''
+    #if profile=='base':
+    #    report_name = settings.PREP_REPORTS_PATH + 'fds_processing_time.csv'        
+    #else: 
+    #    report_name = settings.PROFILE_REPORTS_PATH + 'fds_processing_time.csv' 
+    file_size = os.path.getsize(filepath)/(1024.*1024.)
+    filebase = os.path.basename(filepath)
+    timing_rec  = OrderedDict([ ('run_time', timestamp),
+                       ('stage', stage),
+                       ('profile', profile),
+                       ('source_file', filebase),
+                       ('file_size_meg', file_size),
+                       ('processing_seconds', processing_time),
+                       ('epoch', time.time()),
+                       ('status',status),
+                     ])
+    #print timing_rec                                          
+    #with open(report_name,'a') as rpt:
+    #    rpt.write( ','.join([ str(v) for v in timing_rec.values()]) + '\n') 
+    if db_connection:            
+        dict_to_oracle(db_connection, timing_rec, 'fds_processing_time')
+    logger.debug('align report ' + ','.join([str(v) for v in timing_rec.values()]) )
+
+
+### flight attribute reporting
+def dump_flight_attributes(flight):
+    '''print out full list of flight attributes'''
+    for a in flight: 
+        if type(a.value)==type(dict()):
+            print a.name+':'
+            for k,v in a.value.items():
+                print '  '+k+':', v
+        else:
+            print a.name+':', a.value
+
+
+if __name__=='__main__':
+    print 'loaded'

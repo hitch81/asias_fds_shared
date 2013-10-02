@@ -8,7 +8,6 @@ import pdb
 import sys, traceback, os, glob, shutil, logging, time, copy
 import cPickle as pickle
 from datetime import datetime
-from collections import OrderedDict
 
 import numpy as np
 import simplejson as json
@@ -31,349 +30,8 @@ import hdfaccess.file
 
 import fds_oracle
 import frame_list # map of tail# to LFLs
-from frame_list import get_info_from_filename
+from frame_list import get_aircraft_info
 logger = logging.getLogger(__name__) #for process_short)_
-
-
-def get_input_files(INPUT_DIR, file_suffix, logger):
-    ''' returns a list of absolute paths '''
-    files_to_process = glob.glob(os.path.join(INPUT_DIR, file_suffix))
-    file_count = len(files_to_process)
-    logger.warning('Processing '+str(file_count)+' files.')
-    return files_to_process, file_count
-
-
-def get_short_profile_name(myfile):
-    '''peel off last level of folder names in path = profile name'''
-    this_path = os.path.realpath(myfile)  #full path to this script
-    this_folder =  os.path.split(this_path)[0]
-    short_profile = this_folder.replace('\\','/').split('/')[-1]
-    return short_profile
-
-
-def file_move(from_path, to_path):
-    '''attempts to move the file even if a file at to_path exists.
-       on Windows it will fail if the file at to_path is already open
-    '''
-    try:
-        os.remove(to_path)
-    except:
-        pass
-    os.rename(from_path, to_path)
-    return
-    
-
-def initialize_logger(LOG_LEVEL, filename='log_messages.txt'):
-    '''all stages use this common logger setup'''
-    logger = logging.getLogger()
-    #logger = initialize_logger(LOG_LEVEL)
-    logger.setLevel(LOG_LEVEL)
-    logger.addHandler(logging.FileHandler(filename=filename)) #send to file 
-    logger.addHandler(logging.StreamHandler())                #tee to screen
-    return logger
-
-
-def clean_up(time_start, file_count, logger, timing_report=None):
-    '''wrap up at end of analyze and profile runs'''
-    print '  time to process '+ str(file_count)+' files: '+str(time.time() - time_start) 
-    print ' *** Processing finished'
-    if timing_report:
-        timing_report.close()    
-    for handler in logger.handlers: handler.close()        
-
-
-###  plots 
-def show_plot(plt):                      
-    print 'Paused for plot review. Close plot window to continue.'
-    plt.show()
-    plt.close()
-
-def save_plot(plt, fname):
-    plt.draw()
-    plt.savefig(fname, transparent=False ) #, bbox_inches="tight")
-    plt.close()
-
-def aplot(array_dict={}, title='array plot', grid=True, legend=True):
-    '''plot a dictionary of up to four arrays, with legend by default
-        example dict:  {'Airspeed': airspeed.array }
-    '''
-    import matplotlib.pyplot as plt
-    print 'title:', title
-    if len(array_dict.keys())==0:
-        print 'Nothing to plot!'
-        return
-    figure = plt.figure()
-    figure.set_size_inches(10,5)
-    series_names = array_dict.keys()[:4]  #only first 4
-    series_formats = ['k','g','b','r']    #color codes
-    for i,nm in enumerate(series_names):
-        plt.plot(array_dict[nm], series_formats[i])
-    if grid: plt.grid(True, color='gray')
-    plt.title(title)
-    if legend: 
-        leg = plt.legend(series_names, 'upper left', fancybox=True)
-        leg.get_frame().set_alpha(0.5)        
-    plt.xlabel('sample index')
-    print 'Paused for plot review. Close plot window to continue.'
-    plt.show()
-    plt.clf()
-    plt.close()
-
-
-def lplot(myhdf5, params=('Airspeed','Altitude STD')):
-    '''plot a list of parameters from an hdf5 file'''
-    pdict={}
-    for p in params:
-        pdict[p]=myhdf5.get(p).array
-    aplot(pdict)
-
-### job report 
-JOB_REPORT_FIELDS = ['run_time', 'stage',  'profile', 'cmt', 'input_path', 'output_path', 'file_count', 'processing_seconds']
-
-def get_job_record(timestamp, stage, profile, comment, input_path, output_path, file_count, processing_seconds, file_repository='central'):
-    '''return job info as an OrderedDict'''
-    #computer_name = platform.node()
-    rec = OrderedDict([ ('run_time', timestamp),    ('stage', stage), 
-                        ('profile', profile),       ('cmt', comment), ('file_repository',file_repository),
-                        ('input_path', input_path), ('output_path', output_path),
-                        ('file_count', file_count), ('processing_seconds', processing_seconds)
-                     ])
-    return rec
-    
-
-def report_job(timestamp,   stage, profile, comment, input_path, output_path, 
-               file_count, processing_seconds, logger,  db_connection=None):
-    '''save timing record to csv and oracle (if available)'''
-    report_name = settings.PREP_REPORTS_PATH + 'fds_jobs.csv'        
-    job_rec = OrderedDict([ ('run_time', timestamp),    ('stage', stage), 
-                            ('profile', profile),       ('cmt', comment), 
-                            ('input_path', input_path), ('output_path', output_path),
-                            ('file_count', file_count), ('processing_seconds', processing_seconds)
-                          ]) 
-    #print job_rec                                          
-    with open(report_name,'a') as rpt:
-        rpt.write( ','.join([ str(v) for v in job_rec.values()]) + '\n') 
-    if db_connection:            
-        fds_oracle.dict_to_oracle(db_connection, job_rec, 'fds_jobs')
-    logger.warning('\nJOB REPORT: \n' + '\n'.join([str(v) for v in job_rec.items()]) )
-
-
-### timing report
-TIMING_REPORT_FIELDS = ['run_time', 'stage',  'profile', 'cmt', 'source_file', 'file_size_meg', 'processing_seconds', 'epoch', 'status']
-
-def initialize_timing_report(REPORTS_DIR):
-    '''for reporting run times '''
-    timestamp = datetime.now()
-    report_name = REPORTS_DIR + 'fds_processing_time.csv'
-    return timestamp, report_name    
-   
-
-def report_timing(timestamp, stage, profile, filepath, 
-                  processing_time, status, logger, db_connection=None):
-    '''save timing record to csv and if oracle (if available)'''
-    if profile=='base':
-        report_name = settings.PREP_REPORTS_PATH + 'fds_processing_time.csv'        
-    else: 
-        report_name = settings.PROFILE_REPORTS_PATH + 'fds_processing_time.csv' 
-
-    file_size = os.path.getsize(filepath)/(1024.*1024.)
-    filebase = os.path.basename(filepath)
-    timing_rec  = OrderedDict([ ('run_time', timestamp),
-                       ('stage', stage),
-                       ('profile', profile),
-                       ('source_file', filebase),
-                       ('file_size_meg', file_size),
-                       ('processing_seconds', processing_time),
-                       ('epoch', time.time()),
-                       ('status',status),
-                     ])
-    #print timing_rec                                          
-    with open(report_name,'a') as rpt:
-        rpt.write( ','.join([ str(v) for v in timing_rec.values()]) + '\n') 
-    if db_connection:            
-        fds_oracle.dict_to_oracle(db_connection, timing_rec, 'fds_processing_time')
-    logger.debug('align report ' + ','.join([str(v) for v in timing_rec.values()]) )
-
-
-### flight attribute reporting
-def dump_flight_attributes(flight):
-    '''print out full list of flight attributes'''
-    for a in flight: 
-        if type(a.value)==type(dict()):
-            print a.name+':'
-            for k,v in a.value.items():
-                print '  '+k+':', v
-        else:
-            print a.name+':', a.value
-
-
-
-### KPV KTI Phase reporting       
-#     The values saved to Oracle and csv's are in seconds, making them convenient for reporting.
-#     The values stored to pickle files maintain their original frequency and offset, for use with derive_parameters
-def flight_measures_header():
-    ''' KPV has value, KTI has lat/lon and datetime, phase has duration '''
-    header = ['path', 'type', 'index', 'duration', 'name', 'value', 'datetime', 'latitude', 'longitude'] 
-    return header
-
-    
-def initialize_flight_measures(OUTPUT_DIR, short_profile):
-    measures_filename = OUTPUT_DIR + short_profile+'_measures.csv'  # KPV/KTI/Phase output
-    if os.path.isfile(measures_filename):
-        os.remove(measures_filename)
-    with open(measures_filename, 'wt') as dest:
-        dest.write(','.join(flight_measures_header())+'\n')
-    return measures_filename    
-
-
-def csv_flight_measures(hdf_path, kti_list, kpv_list, phase_list, dest_path):
-    ''' send flight details to CSV'''
-    #print 'csv flight measures', hdf_path, dest_path
-    header = flight_measures_header()
-    rows = flight_measures(hdf_path, kti_list, kpv_list, phase_list)     
-    with open(dest_path, 'at') as dest:
-        for row in rows:
-            vals = [ str(row.get(col,'')) for col in header]
-            dest.write( ','.join(vals) +'\n')
-    return rows
-
-
-
-             
-def pkl_suffix():
-    '''file suffix versioning'''
-    return 'ver'+analyzer_version.replace('.','_') +'.pkl'  # eg 0.0.5 => ver0_0_5.pkl
-
-def get_precomputed_parameters(flight_path_and_file, flight):    
-    ''' if pkl file exists and matches version, in read it into params dict'''
-    # suffix includes FDS version as a compatibility check
-    source_file = flight_path_and_file.replace('.hdf5', pkl_suffix())
-    precomputed_parameters={}
-    if os.path.isfile(source_file):
-        logger.info('get_precomputed_profiles. found: '+ source_file)
-        with open(source_file, 'rb') as pkl_file:
-            precomputed_parameters = pickle.load(pkl_file)
-    else:
-        logger.info('No compatible precomputed profile found')
-    return precomputed_parameters
-
-
-def flight_measures(hdf_path, kti_list, kpv_list, phase_list):
-    '''Adapted from FDS FlightDataAnalyzer/plot_flight.py csv_flight_details()
-        No HDF5 sourced values are included.'''
-    rows = []
-    
-    for value in kti_list:
-        vals = value.todict()  # recordtype
-        vals['path'] = hdf_path
-        vals['type'] = 'Key Time Instance'
-        rows.append( vals )
-
-    for value in kpv_list:
-        vals = value.todict()  # recordtype
-        vals['path'] = hdf_path
-        vals['type'] = 'Key Point Value'
-        rows.append( vals )
-
-    for value in phase_list:
-        vals = value._asdict()  # namedtuple
-        vals['name'] = value.name
-        vals['path'] = hdf_path
-        vals['type'] = 'Phase'
-        vals['index'] = value.start_edge
-        vals['duration'] = value.stop_edge - value.start_edge  # (secs)
-        rows.append(vals)
-
-    rows = sorted(rows, key=lambda x: x['index'])
-    return rows
-    
-
-def make_kml_file(start_datetime, flight_attrs, kti, kpv, flight_file, REPORTS_DIR, output_path_and_file): 
-    '''adapted from FDS process_flight.  As of 2013/6/6 we do not geolocate unless KML was requested, to save time.'''
-    from analysis_engine.plot_flight    import track_to_kml
-    with hdf_file(output_path_and_file) as hdf:
-        # geo locate KTIs
-        kti = geo_locate(hdf, kti)
-        kti = _timestamp(start_datetime, kti)                    
-        # geo locate KPVs
-        kpv = geo_locate(hdf, kpv)
-        kpv = _timestamp(start_datetime, kpv)
-    report_path_and_file = REPORTS_DIR + flight_file.replace('.','_')+'.kml'
-    track_to_kml(output_path_and_file, kti, kpv, flight_attrs, dest_path=report_path_and_file)
-    
-
-def dump_pickles(output_path_and_file, params, kti, kpv, phases, approach, flight_attrs, logger):
-    #dump params to pickle file -- versioned
-    pkl_end = pkl_suffix()
-    pickle_file=output_path_and_file.replace('.hdf5',pkl_end )
-    with open(pickle_file, 'wb') as output:
-        pickle.dump(params, output)
-    with open( pickle_file.replace(pkl_end,'_kti_'+pkl_end), 'wb') as output:
-        pickle.dump(kti, output)
-    with open(pickle_file.replace(pkl_end,'_kpv_'+pkl_end), 'wb') as output:
-        pickle.dump(kpv, output)
-    with open(pickle_file.replace(pkl_end,'_phases_'+pkl_end), 'wb') as output:
-        pickle.dump(phases, output)
-    with open(pickle_file.replace(pkl_end,'_approach_'+pkl_end), 'wb') as output:
-        pickle.dump(approach, output)
-    with open(pickle_file.replace(pkl_end,'_fltattr_'+pkl_end), 'wb') as output:
-        pickle.dump(flight_attrs, output)
-    logger.info('saved '+ pickle_file)
-
-
-### run FlightDataAnalyzer for analyze and profile
-
-
-def prep_nodes(short_profile, module_names, include_flight_attributes):
-    ''' go through modules to get derived nodes and check if we need to write a new hdf5 file'''
-    if short_profile=='base':
-        required_nodes  = get_derived_nodes(settings.NODE_MODULES + module_names)
-        available_nodes   = required_nodes        
-        required_params = available_nodes.keys()
-        exclusions = ['Transmit', 
-                      'EngGasTempDuringMaximumContinuousPowerForXMinMax',  #still calcs
-                      'Eng Gas Temp During Maximum Continuous Power For X Min Max',
-                      'EngGasTempDuringEngStartForXSecMax',
-                      'Eng Gas Temp During Eng Start For X Sec Max',
-                      'Eng Oil Temp For X Min Max',         
-                      # 'Configuration',
-                      ]
-        required_params = sorted( set(required_params ) - set(exclusions)) #exclude select params from FDS set              
-        if include_flight_attributes:
-            required_params = list(set( required_params + get_derived_nodes(['analysis_engine.flight_attribute']).keys()))            
-    else:
-        required_nodes = get_derived_nodes(module_names)    
-        available_nodes  = get_derived_nodes(settings.NODE_MODULES + module_names)
-        required_params = required_nodes.keys()
-    return required_params, available_nodes
-               
-
-def prep_order(flight, frame_dict, start_datetime, derived_nodes, required_params):
-    ''' open example HDF to see recorded params and build process order'''
-    derived_nodes_copy = derived_nodes #copy.deepcopy(derived_nodes)
-    node_mgr = NodeManager( start_datetime, flight.duration, 
-                            flight.series.keys(),       #from HDF.   was hdf.valid_param_names(), #hdf_keys; should be from LFL
-                            required_params,   #requested
-                            derived_nodes_copy,     #methods that can be computed; equals profile + base nodes   ????
-                            flight.aircraft_info, 
-                            achieved_flight_record=flight.achieved_flight_record
-                            )
-    # calculate dependency tree
-    process_order, gr_st = dependency_order(node_mgr, draw=False)     
-    logger.warning( 'process order: ' + str(process_order[:5]) + '...' ) #, gr_st
-    return node_mgr, process_order  # a list of node names
-    
-
-def get_output_file(OUTPUT_DIR, flight_path_and_file, profile):
-    ''' if no new timeseries, just set output path  input path'''
-    if profile=='base':
-        #logger.debug('writing new hdf5')
-        flight_file          = os.path.basename(flight_path_and_file)
-        output_path_and_file = (OUTPUT_DIR+flight_file).replace('.0','_0').replace('.hdf5', '_'+profile+'.hdf5')
-    else:
-        logger.debug('read only. no new hdf5')
-        output_path_and_file = flight_path_and_file            
-    return output_path_and_file 
 
 
 class Flight(object):
@@ -388,6 +46,7 @@ class Flight(object):
         self.file_repository=None
         self.duration = None
         self.start_datetime= None
+        self.start_epoch = None
         self.aircraft_info = {}            
         self.achieved_flight_record={}            
         self.series = {}         #dict of hdfaccess.Parameter        
@@ -460,6 +119,153 @@ class Flight(object):
         s = s+ '\n  aircraft_info:  ' + str(self.aircraft_info)
         s = s+ '\n  parameter nodes:  ' + str(self.parameters.keys()[:3]) + '...'
         return s
+
+###########################################################
+
+def get_input_files(INPUT_DIR, file_suffix, logger):
+    ''' returns a list of absolute paths '''
+    files_to_process = glob.glob(os.path.join(INPUT_DIR, file_suffix))
+    file_count = len(files_to_process)
+    logger.warning('Processing '+str(file_count)+' files.')
+    return files_to_process, file_count
+
+
+def get_short_profile_name(myfile):
+    '''peel off last level of folder names in path = profile name'''
+    this_path = os.path.realpath(myfile)  #full path to this script
+    this_folder =  os.path.split(this_path)[0]
+    short_profile = this_folder.replace('\\','/').split('/')[-1]
+    return short_profile
+
+
+def file_move(from_path, to_path):
+    '''attempts to move the file even if a file at to_path exists.
+       on Windows it will fail if the file at to_path is already open
+    '''
+    try:
+        os.remove(to_path)
+    except:
+        pass
+    os.rename(from_path, to_path)
+    return
+    
+
+def initialize_logger(LOG_LEVEL, filename='log_messages.txt'):
+    '''all stages use this common logger setup'''
+    logger = logging.getLogger()
+    logger.setLevel(LOG_LEVEL)
+    logger.addHandler(logging.FileHandler(filename=filename)) #send to file 
+    logger.addHandler(logging.StreamHandler())                #tee to screen
+    return logger
+
+
+
+def make_kml_file(start_datetime, flight_attrs, kti, kpv, flight_file, REPORTS_DIR, output_path_and_file): 
+    '''adapted from FDS process_flight.  As of 2013/6/6 we do not geolocate unless KML was requested, to save time.'''
+    from analysis_engine.plot_flight    import track_to_kml
+    with hdf_file(output_path_and_file) as hdf:
+        # geo locate KTIs
+        kti = geo_locate(hdf, kti)
+        kti = _timestamp(start_datetime, kti)                    
+        # geo locate KPVs
+        kpv = geo_locate(hdf, kpv)
+        kpv = _timestamp(start_datetime, kpv)
+    report_path_and_file = REPORTS_DIR + flight_file.replace('.','_')+'.kml'
+    track_to_kml(output_path_and_file, kti, kpv, flight_attrs, dest_path=report_path_and_file)
+    
+
+def pkl_suffix():
+    '''file suffix versioning'''
+    return 'ver'+analyzer_version.replace('.','_') +'.pkl'  # eg 0.0.5 => ver0_0_5.pkl
+
+def get_precomputed_parameters(flight_path_and_file, flight):    
+    ''' if pkl file exists and matches version, in read it into params dict'''
+    # suffix includes FDS version as a compatibility check
+    source_file = flight_path_and_file.replace('.hdf5', pkl_suffix())
+    precomputed_parameters={}
+    if os.path.isfile(source_file):
+        logger.info('get_precomputed_profiles. found: '+ source_file)
+        with open(source_file, 'rb') as pkl_file:
+            precomputed_parameters = pickle.load(pkl_file)
+    else:
+        logger.info('No compatible precomputed profile found')
+    return precomputed_parameters
+
+
+def dump_pickles(output_path_and_file, params, kti, kpv, phases, approach, flight_attrs, logger):
+    #dump params to pickle file -- versioned
+    pkl_end = pkl_suffix()
+    pickle_file=output_path_and_file.replace('.hdf5',pkl_end )
+    with open(pickle_file, 'wb') as output:
+        pickle.dump(params, output)
+    with open( pickle_file.replace(pkl_end,'_kti_'+pkl_end), 'wb') as output:
+        pickle.dump(kti, output)
+    with open(pickle_file.replace(pkl_end,'_kpv_'+pkl_end), 'wb') as output:
+        pickle.dump(kpv, output)
+    with open(pickle_file.replace(pkl_end,'_phases_'+pkl_end), 'wb') as output:
+        pickle.dump(phases, output)
+    with open(pickle_file.replace(pkl_end,'_approach_'+pkl_end), 'wb') as output:
+        pickle.dump(approach, output)
+    with open(pickle_file.replace(pkl_end,'_fltattr_'+pkl_end), 'wb') as output:
+        pickle.dump(flight_attrs, output)
+    logger.info('saved '+ pickle_file)
+
+
+### run FlightDataAnalyzer for analyze and profile
+
+
+def prep_nodes(short_profile, module_names, include_flight_attributes):
+    ''' go through modules to get derived nodes '''
+    if short_profile=='base':
+        required_nodes  = get_derived_nodes(settings.NODE_MODULES + module_names)
+        available_nodes   = required_nodes        
+        required_params = available_nodes.keys()
+        exclusions = ['Transmit', 
+                      'EngGasTempDuringMaximumContinuousPowerForXMinMax',  #still calcs
+                      'Eng Gas Temp During Maximum Continuous Power For X Min Max',
+                      'EngGasTempDuringEngStartForXSecMax',
+                      'Eng Gas Temp During Eng Start For X Sec Max',
+                      'Eng Oil Temp For X Min Max',         
+                      # 'Configuration',
+                      ]
+        required_params = sorted( set(required_params ) - set(exclusions)) #exclude select params from FDS set              
+        if include_flight_attributes:
+            required_params = list(set( required_params + get_derived_nodes(['analysis_engine.flight_attribute']).keys()))            
+    else:
+        required_nodes = get_derived_nodes(module_names)    
+        available_nodes  = get_derived_nodes(settings.NODE_MODULES + module_names)
+        required_params = required_nodes.keys()
+    return required_params, available_nodes
+               
+
+def prep_order(flight, frame_dict, start_datetime, derived_nodes, required_params):
+    ''' open example HDF to see recorded params and build process order'''
+    derived_nodes_copy = copy.deepcopy(derived_nodes)  #derived_nodes   #
+    node_mgr = NodeManager( start_datetime, flight.duration, 
+                            flight.series.keys(),       #from HDF.   was hdf.valid_param_names(), #hdf_keys; should be from LFL
+                            required_params,   #requested
+                            derived_nodes_copy,     #methods that can be computed; equals profile + base nodes   ????
+                            flight.aircraft_info, 
+                            achieved_flight_record=flight.achieved_flight_record
+                            )
+    # calculate dependency tree
+    process_order, gr_st = dependency_order(node_mgr, draw=False)     
+    logger.warning( 'process order: ' + str(process_order[:5]) + '...' ) #, gr_st
+    return node_mgr, process_order  # a list of node names
+    
+
+def get_output_file(OUTPUT_DIR, flight_path_and_file, profile):
+    ''' if no new timeseries, just set output path  input path'''
+    if profile=='base':
+        #logger.debug('writing new hdf5')
+        flight_file          = os.path.basename(flight_path_and_file)
+        output_path_and_file = (OUTPUT_DIR+flight_file).replace('.0','_0').replace('.hdf5', '_'+profile+'.hdf5')
+    else:
+        logger.debug('read only. no new hdf5')
+        output_path_and_file = flight_path_and_file            
+    return output_path_and_file 
+
+
 
 
 def get_frequency_offset(mynode, deps):
@@ -629,7 +435,7 @@ def check_derived_array(param_name, result, duration ):
     return result
             
 
-def derive_parameters_series(flight, node_mgr, process_order, precomputed={}):
+def derive_parameters_series(duration, node_mgr, process_order, precomputed={}):
     '''
     Non HDF5 version. Suitable for FFD and Notebook profile development.
     
@@ -659,11 +465,21 @@ def derive_parameters_series(flight, node_mgr, process_order, precomputed={}):
         #   logger.info('_derive_: hdf '+param_name)            
         #   continue        
         #elif
+
+        #event_par =[k for k in flight.parameters.keys() if k.startswith('Event')]    
+        #if 'Event Marker Pressed' in event_par:
+        #  print '!!!!!!!!!!!!!!!!!!'
+        #   pdb.set_trace()
+        
+    
         if node_mgr.get_attribute(param_name) is not None:
             logger.info('_derive_: get_attribute '+param_name)
             continue
         elif param_name in params.keys():  # already calculated
             logger.info('_derive_: re-using precomputed'+param_name)
+            continue
+        elif not node_mgr.derived_nodes.has_key(param_name):
+            logger.info('_derive_: in process_order but not derived_nodes: '+param_name)
             continue
         elif param_name in res['series'].keys():
             print 'derive_parameters: in series but not params:', param_name
@@ -672,6 +488,8 @@ def derive_parameters_series(flight, node_mgr, process_order, precomputed={}):
 
         ####compute###########################################################    
         logger.info('_derive_: computing '+param_name)        
+        #if param_name=='Event Marker Pressed':
+        #    pdb.set_trace()
         node_class = node_mgr.derived_nodes[param_name]  #NB raises KeyError if Node is "unknown"
         try:        
             deps, pre_aligned = get_deps_series(node_class, params, node_mgr, pre_aligned )
@@ -693,15 +511,15 @@ def derive_parameters_series(flight, node_mgr, process_order, precomputed={}):
             #Q: track node instead of result here??
             params[param_name] = result
             for one_hz in result.get_aligned(P(frequency=1, offset=0)):
-                if not (0 <= one_hz.index <= flight.duration):
-                    raise IndexError("KPV '%s' index %.2f is not between 0 and %d" % (one_hz.name, one_hz.index, flight.duration))
+                if not (0 <= one_hz.index <= duration):
+                    raise IndexError("KPV '%s' index %.2f is not between 0 and %d" % (one_hz.name, one_hz.index, duration))
                 res['kpv'].append(one_hz)
         
         elif node.node_type is KeyTimeInstanceNode:
             params[param_name] = result
             for one_hz in result.get_aligned(P(frequency=1, offset=0)):
-                if not (0 <= one_hz.index <= flight.duration):
-                    raise IndexError("KTI '%s' index %.2f is not between 0 and %d" % (one_hz.name, one_hz.index, flight.duration))
+                if not (0 <= one_hz.index <= duration):
+                    raise IndexError("KTI '%s' index %.2f is not between 0 and %d" % (one_hz.name, one_hz.index, duration))
                 res['kti'].append(one_hz)
         
         elif node.node_type is FlightAttributeNode:
@@ -712,76 +530,44 @@ def derive_parameters_series(flight, node_mgr, process_order, precomputed={}):
                 logger.warning("Flight Attribute Node '%s' returned empty handed.", param_name)
                     
         elif issubclass(node.node_type, SectionNode):
-            aligned_section, res['phase'] = align_section(result, flight.duration, res['phase'])
+            aligned_section, res['phase'] = align_section(result, duration, res['phase'])
             params[param_name] = aligned_section  ### 
             
         elif issubclass(node.node_type, DerivedParameterNode):
             logger.info('series: ' + param_name)
-            result = check_derived_array(param_name, result, flight.duration)
+            result = check_derived_array(param_name, result, duration)
             #print str(result
             res['series'][param_name] = result  
             res['series'][param_name].name = param_name
             params[param_name] = result
             
         elif issubclass(node.node_type, ApproachNode):
-            aligned_approach, res['approach'] = check_approach(result, flight.duration, res['approach'])   
+            aligned_approach, res['approach'] = check_approach(result, duration, res['approach'])   
             params[param_name] = aligned_approach
         else:
             raise NotImplementedError("Unknown Type %s" % node.__class__)
         continue
     return res, params
 
-
-
 ###################################################################################################
 
-def get_aircraft_info(flight_file, frame_dict):
-    #print flight_file
-    if flight_file.find('_ffd.hdf5')>=0 or flight_file.find('_ffd_')>=0:
-        # temporary test values; tail number is a dummy
-        aircraft_info =  {'Frame':'FFD', 'Manufacturer':'Bombardier', 'Precise Positioning':True, 
-                          'Family': 'CRJ',  'Series': 'CRJ 700',  'Frame Doubled':False,
-                          'Tail Number':'FFD40'}
-    else:
-        _, _, _, registration = get_info_from_filename(flight_file, frame_dict)
-        aircraft_info         = frame_dict[registration]
-        aircraft_info['Tail Number'] = registration
-    return aircraft_info                
-
-
-def load_flight(filepath, frame_dict, file_repository):
-    '''load a Flight object'''
-    aircraft_info = get_aircraft_info( os.path.basename(filepath), frame_dict)                
-    logger.debug(aircraft_info)
-    flight_dict = {'filepath': filepath, 'aircraft_info':aircraft_info}
-    flight = Flight()   
-    flight.file_repository = file_repository
-    flight.aircraft_info = aircraft_info        
-    if filepath.endswith('.hdf5'):
-        flight.load_from_hdf5(flight_dict)        
-    #elif filepath.endswith('.ffd'):
-    #   flight.load_from_flight(flight_dict)        
-    else:
-        print 'Aack!!! Unknown file type'
-    return flight
-
-
-def analyze_one(flight, output_path, profile, 
-                            requested_params, available_nodes, 
-                            test_param_names, test_node_mgr, test_process_order):
+def analyze_one(flight, output_path, profile, requested_params, available_nodes): 
+        # , test_param_names, test_node_mgr, test_process_order):
         '''analyze one flight'''
-        precomputed_parameters=flight.parameters        
+        precomputed_parameters=flight.parameters.copy()        
         available_nodes_copy = copy.deepcopy(available_nodes)
-        if flight.parameters.keys() != test_param_names: #rats, have to redo this
-            print 'HELLO FROM ANALYZE_ONE!'
-            node_mgr = node.NodeManager( 
-                        flight.start_datetime, flight.duration,
-                        flight.parameters.keys(), #series keys include invalid series
-                        requested_params, available_nodes_copy, flight.aircraft_info,
-                        achieved_flight_record=flight.achieved_flight_record
-                      )                  
-            process_order, gr_st = dependency_order(node_mgr, draw=False)     
-        res, params = derive_parameters_series(flight, node_mgr, process_order, precomputed_parameters)
+        #if flight.parameters.keys() != test_param_names: #rats, have to redo this
+        node_mgr = node.NodeManager( 
+                flight.start_datetime, flight.duration,
+                flight.parameters.keys(), #series keys include invalid series
+                requested_params, available_nodes_copy, flight.aircraft_info,
+                achieved_flight_record=flight.achieved_flight_record
+              )                  
+        process_order, gr_st = dependency_order(node_mgr, draw=False)     
+        #else:
+        #    node_mgr = test_node_mgr
+        #    process_order = test_process_order
+        res, params = derive_parameters_series(flight.duration, node_mgr, process_order, precomputed_parameters)
         #post-process: save
         for k in res['series'].keys():
                 flight.parameters[k] = res['series'][k]
@@ -791,6 +577,24 @@ def analyze_one(flight, output_path, profile,
         return flight, res, params
 
 
+def load_flight(filepath, frame_dict, file_repository):
+    '''load a Flight object'''
+    aircraft_info = get_aircraft_info( filepath, frame_dict)                
+    
+    logger.debug(aircraft_info)
+    flight_dict = {'filepath': filepath, 'aircraft_info':aircraft_info}
+    flight = Flight()   
+    flight.file_repository = file_repository
+    flight.aircraft_info = aircraft_info        
+    if filepath.endswith('.hdf5'):
+        #    def load_from_hdf5(self, flight_dict, required_series=[]):
+        flight.load_from_hdf5(flight_dict, required_series=[])        
+    #elif filepath.endswith('.ffd'):
+    #   flight.load_from_flight(flight_dict)        
+    else:
+        print 'Aack!!! Unknown file type'
+    return flight
+    
 def analyzer_fail(flight_file):
         ex_type, ex, tracebck = sys.exc_info()
         logger.warning('ANALYZER ERROR '+flight_file)
@@ -800,8 +604,11 @@ def analyzer_fail(flight_file):
         
 def run_analyzer(short_profile,    module_names,
                  logger,           files_to_process,    input_dir,        output_dir,       reports_dir, 
-                 include_flight_attributes=False, make_kml=False,   save_oracle=True, comment='',
-                 file_repository='central', start_datetime = datetime(2012, 4, 1, 0, 0, 0), mortal=True ):    
+                 include_flight_attributes=False, make_kml=False,   
+                 save_oracle=True, comment='',
+                 file_repository='linux', 
+                 start_datetime = datetime(2012, 4, 1, 0, 0, 0), 
+                 mortal=True ):    
     '''
     run FlightDataAnalyzer for analyze and profile. mostly file mgmt and reporting.
     currently runs against a single fleet at a time.
@@ -821,6 +628,8 @@ def run_analyzer(short_profile,    module_names,
     test_flight = load_flight( test_file, frame_dict, file_repository )
     logger.warning( 'test_file for prep_order(): '+ test_file)
     test_param_names = test_flight.parameters.keys()
+    
+    #re-jigger to return, for profiles, the set of parameters we need to load
     test_node_mgr, test_process_order = prep_order(test_flight, frame_dict, start_datetime, available_nodes, requested_params)
     
     ### loop over files and compute nodes for each
@@ -834,34 +643,32 @@ def run_analyzer(short_profile,    module_names,
         logger.debug('starting '+ flight_file)
         flight = load_flight(flight_path_and_file, frame_dict, file_repository)
         output_path  = get_output_file(output_dir, flight_path_and_file, short_profile)
-        logger.warning(' *** Processing flight %s', flight_file)
+        logger.info(' *** Processing flight %s', flight_file)
         if mortal: #die on error
-            flight, res, params = analyze_one(flight, output_path, short_profile, 
-                                                                  requested_params, available_nodes, 
-                                                                  test_param_names, test_node_mgr, test_process_order)
+            flight, res, params = analyze_one(flight, output_path, short_profile,  requested_params, available_nodes)  
+            #, test_param_names, test_node_mgr, test_process_order)
             status='ok'
         else:    #capture failure and keep on chuggin'
             try: 
-                flight, res, params = analyze_one(flight, output_path, short_profile, 
-                                                                  requested_params, available_nodes, 
-                                                                  test_param_names, test_node_mgr, test_process_order)
-
+                flight, res, params = analyze_one(flight, output_path, short_profile, requested_params, available_nodes) 
+                #, test_param_names, test_node_mgr, test_process_order)
                 status='ok'
             except: 
                 analyzer_fail(flight_file)
                 status='fail'
-        logger.info(' *** Processing flight %s finished ' + flight_file + ' time: ' + str(time.time()-file_start_time) + 'status: '+status)
+        proc_time = "{:2.4f}".format(time.time()-file_start_time)
+        logger.warning(' *** Processing flight %s finished ' + flight_file + ' time: ' + proc_time + 'status: '+status)
         stage = 'analyze' if short_profile=='base' else 'profile'    
         processing_time = time.time()-file_start_time
-        report_timing(timestamp, stage, short_profile, flight_path_and_file, processing_time, status, logger, cn)
+        if save_oracle: fds_oracle.report_timing(timestamp, stage, short_profile, flight_path_and_file, processing_time, status, logger, cn)
         if status=='ok' and save_oracle:  fds_oracle.analyzer_to_oracle(cn, short_profile, res, params, flight, output_dir, output_path)
         if status=='ok' and make_kml:    make_kml_file(start_datetime, res['attr'], res['kti'], res['kpv'], flight_file, reports_dir, output_path)
 
-    report_job(timestamp, stage, short_profile, comment, input_dir, output_dir, 
-               len(files_to_process), (time.time()-start_time), logger, db_connection=cn)
+    fds_oracle.report_job(timestamp, stage, short_profile, comment, 
+                                      file_repository, input_dir, output_dir, 
+                                      len(files_to_process), (time.time()-start_time), logger, db_connection=cn)
     if save_oracle:  cn.close()
     return flight
-
     
 
 def run_profile(profile_name, module_names, 
