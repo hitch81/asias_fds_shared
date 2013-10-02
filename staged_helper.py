@@ -671,6 +671,41 @@ def run_analyzer(short_profile,    module_names,
     return flight
     
 
+def parallel_directview(PROFILE_NAME, module_names, FILE_REPOSITORY, LOG_LEVEL, 
+               FILES_TO_PROCESS, COMMENT, MAKE_KML_FILES ):
+    '''sets up worker namespaces for ipython parallel runs'''
+    print "Run 'ipcluster start -n 10' from the command line first!"
+    #from IPython import parallel
+    from IPython.parallel import Client
+    c=Client()  #c=Client(debug=True)
+    print c.ids
+    engine_count = len(c.ids)
+    dview = c[:]  #DirectView list of engines
+    dview.clear() #clean up the namespaces on the eng
+    dview.block = True           
+    
+    #build parallel namespace
+    dview['module_names']    = module_names 
+    dview['PROFILE_NAME'] = PROFILE_NAME
+    dview['COMMENT'] = COMMENT
+    dview['LOG_LEVEL'] = LOG_LEVEL 
+    dview.scatter('files_to_process', FILES_TO_PROCESS)
+    dview['file_repository'] = FILE_REPOSITORY    
+    dview['MAKE_KML_FILES'] = MAKE_KML_FILES 
+    
+    reports_dir = settings.PROFILE_REPORTS_PATH                              
+    output_dir = settings.PROFILE_DATA_PATH + PROFILE_NAME+'/'   
+    if not os.path.exists(output_dir): 
+        os.makedirs(output_dir)
+    dview['output_dir '] = output_dir 
+    dview['reports_dir '] =  reports_dir 
+    
+    logger = logging.Logger('ipcluster')
+    logger.setLevel(LOG_LEVEL)
+    dview['logger'] = logger
+    return dview
+
+
 def run_profile(profile_name, module_names, 
                           LOG_LEVEL, FILES_TO_PROCESS, COMMENT, MAKE_KML_FILES, 
                           FILE_REPOSITORY='central', save_oracle=True, mortal=True ):
