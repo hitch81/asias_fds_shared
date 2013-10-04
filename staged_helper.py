@@ -213,13 +213,13 @@ def dump_pickles(output_path_and_file, params, kti, kpv, phases, approach, fligh
 
 ### run FlightDataAnalyzer for analyze and profile
 
-
 def prep_nodes(short_profile, module_names, include_flight_attributes):
     ''' go through modules to get derived nodes '''
     if short_profile=='base':
-        required_nodes  = get_derived_nodes(settings.NODE_MODULES + module_names)
-        available_nodes   = required_nodes        
-        required_params = available_nodes.keys()
+        requested_nodes  = get_derived_nodes(settings.NODE_MODULES + module_names)
+        available_nodes   = requested_nodes          
+        
+        requested_params = available_nodes.keys()
         exclusions = ['Transmit', 
                       'EngGasTempDuringMaximumContinuousPowerForXMinMax',  #still calcs
                       'Eng Gas Temp During Maximum Continuous Power For X Min Max',
@@ -228,19 +228,19 @@ def prep_nodes(short_profile, module_names, include_flight_attributes):
                       'Eng Oil Temp For X Min Max',         
                       # 'Configuration',
                       ]
-        required_params = sorted( set(required_params ) - set(exclusions)) #exclude select params from FDS set              
+        requested_params = sorted( set(requested_params) - set(exclusions)) #exclude select params from FDS set              
         if include_flight_attributes:
-            required_params = list(set( required_params + get_derived_nodes(['analysis_engine.flight_attribute']).keys()))            
+            requested_params = list(set( requested_params + get_derived_nodes(['analysis_engine.flight_attribute']).keys()))            
     else:
-        required_nodes = get_derived_nodes(module_names)    
+        requested_nodes   = get_derived_nodes(module_names)    
         available_nodes  = get_derived_nodes(settings.NODE_MODULES + module_names)
-        required_params = required_nodes.keys()
-    return required_params, available_nodes
+        requested_params = requested_nodes.keys()
+    return requested_params, available_nodes
                
 
 def prep_order(flight, frame_dict, start_datetime, derived_nodes, required_params):
     ''' open example HDF to see recorded params and build process order'''
-    derived_nodes_copy = copy.deepcopy(derived_nodes)  #derived_nodes   #
+    derived_nodes_copy = derived_nodes   #copy.deepcopy(derived_nodes)  #
     node_mgr = NodeManager( start_datetime, flight.duration, 
                             flight.series.keys(),       #from HDF.   was hdf.valid_param_names(), #hdf_keys; should be from LFL
                             required_params,   #requested
@@ -305,7 +305,6 @@ def get_frequency_offset(mynode, deps):
                 frequency = alignment_param.frequency
                 offset = alignment_param.offset
         return frequency, offset
-    
 
 
 def get_deps_series(node_class, params, node_mgr, pre_aligned):
@@ -313,9 +312,10 @@ def get_deps_series(node_class, params, node_mgr, pre_aligned):
         # 'params' is a dictionary of previously computed nodes
         # pre_aligned is a dictionary of pre-aligned params, key=(name, frequency, offset)
         deps = []
+        nd = node_class()
+        logger.debug( 'deps of'+ nd.name+ '  deps: '+ str(node_class.get_dependency_names()) )
         node_deps = node_class.get_dependency_names()
         for dep_name in node_deps:
-            #print dep_name, (dep_name in node_mgr.hdf_keys)
             if dep_name in params:  # already calculated
                 deps.append(params[dep_name])
             elif node_mgr.get_attribute(dep_name) is not None:
@@ -323,32 +323,33 @@ def get_deps_series(node_class, params, node_mgr, pre_aligned):
             else:  # dependency not available
                 deps.append(None)
 
-            #pre-align
-            frequency, offset = get_frequency_offset(node_class, deps)
-            #print 'frequency, offset ', frequency, offset 
-            aligned_deps = []        
-            for d in deps:
-                if d is None or frequency is None or offset is None:
-                    aligned_deps.append(d)
-                elif d.name in params:
-                    if pre_aligned.has_key((d.name, frequency, offset)):
-                        aligned_deps.append(  pre_aligned[(d.name, frequency, offset)]  )
-                    else: 
-                        node = node_class()
-                        node.frequency = frequency
-                        node.offset = offset
-                        #print 'pre-aligning', node
-                        pre_aligned[(d.name, frequency, offset)] = d.get_aligned(node)
-                        aligned_deps.append(  pre_aligned[(d.name, frequency, offset)]  )
-                else:
-                    aligned_deps.append(d)
-                    
         if all([d is None for d in deps]):
             #print node_deps, deps
             logger.warning("No dependencies available: "+str(node_deps))
             raise RuntimeError("No dependencies available - Nodes cannot "
                                "operate without ANY dependencies available! "
                                "Node: %s" % node_class.__name__)
+
+        #pre-align
+        frequency, offset = get_frequency_offset(node_class, deps)
+        nodestr= '\t  dep_name:'+ dep_name + ',  hdf?'+ str(dep_name in node_mgr.hdf_keys) + ',  freq:'+str(frequency) + ',  offset:'+str(offset)
+        aligned_deps = []        
+        for d in deps:
+            if d is None or frequency is None or offset is None:
+                aligned_deps.append(d)
+            elif d.name in params:
+                if pre_aligned.has_key((d.name, frequency, offset)):
+                    logger.debug( nodestr +  '---using pre-aligned')
+                    aligned_deps.append(  pre_aligned[(d.name, frequency, offset)]  )
+                else: 
+                    node = node_class()
+                    node.frequency = frequency
+                    node.offset = offset
+                    logger.debug( nodestr +  '***pre-aligning')
+                    pre_aligned[(d.name, frequency, offset)] = d.get_aligned(node)
+                    aligned_deps.append(  pre_aligned[(d.name, frequency, offset)]  )
+            else:
+                aligned_deps.append(d)                    
         return aligned_deps, pre_aligned
         
 
@@ -460,18 +461,16 @@ def derive_parameters_series(duration, node_mgr, process_order, precomputed={}):
               'attr': []
               } #results by node type
    
+    #print 'Process Order'
+    #for p in process_order:
+    #    print '  ',p
+   
     for param_name in process_order:
         #if param_name in node_mgr.hdf_keys:
         #   logger.info('_derive_: hdf '+param_name)            
         #   continue        
         #elif
 
-        #event_par =[k for k in flight.parameters.keys() if k.startswith('Event')]    
-        #if 'Event Marker Pressed' in event_par:
-        #  print '!!!!!!!!!!!!!!!!!!'
-        #   pdb.set_trace()
-        
-    
         if node_mgr.get_attribute(param_name) is not None:
             logger.info('_derive_: get_attribute '+param_name)
             continue
@@ -488,8 +487,6 @@ def derive_parameters_series(duration, node_mgr, process_order, precomputed={}):
 
         ####compute###########################################################    
         logger.info('_derive_: computing '+param_name)        
-        #if param_name=='Event Marker Pressed':
-        #    pdb.set_trace()
         node_class = node_mgr.derived_nodes[param_name]  #NB raises KeyError if Node is "unknown"
         try:        
             deps, pre_aligned = get_deps_series(node_class, params, node_mgr, pre_aligned )
@@ -555,7 +552,7 @@ def analyze_one(flight, output_path, profile, requested_params, available_nodes)
         # , test_param_names, test_node_mgr, test_process_order):
         '''analyze one flight'''
         precomputed_parameters=flight.parameters.copy()        
-        available_nodes_copy = copy.deepcopy(available_nodes)
+        available_nodes_copy = available_nodes #copy.deepcopy(available_nodes)
         #if flight.parameters.keys() != test_param_names: #rats, have to redo this
         node_mgr = node.NodeManager( 
                 flight.start_datetime, flight.duration,
@@ -563,10 +560,7 @@ def analyze_one(flight, output_path, profile, requested_params, available_nodes)
                 requested_params, available_nodes_copy, flight.aircraft_info,
                 achieved_flight_record=flight.achieved_flight_record
               )                  
-        process_order, gr_st = dependency_order(node_mgr, draw=False)     
-        #else:
-        #    node_mgr = test_node_mgr
-        #    process_order = test_process_order
+        process_order, gr_st = dependency_order(node_mgr, draw=False) 
         res, params = derive_parameters_series(flight.duration, node_mgr, process_order, precomputed_parameters)
         #post-process: save
         for k in res['series'].keys():
@@ -577,7 +571,7 @@ def analyze_one(flight, output_path, profile, requested_params, available_nodes)
         return flight, res, params
 
 
-def load_flight(filepath, frame_dict, file_repository):
+def load_flight(filepath, frame_dict, file_repository, series_to_load=[]):
     '''load a Flight object'''
     aircraft_info = get_aircraft_info( filepath, frame_dict)                
     
@@ -587,8 +581,7 @@ def load_flight(filepath, frame_dict, file_repository):
     flight.file_repository = file_repository
     flight.aircraft_info = aircraft_info        
     if filepath.endswith('.hdf5'):
-        #    def load_from_hdf5(self, flight_dict, required_series=[]):
-        flight.load_from_hdf5(flight_dict, required_series=[])        
+        flight.load_from_hdf5(flight_dict, required_series=series_to_load)        
     #elif filepath.endswith('.ffd'):
     #   flight.load_from_flight(flight_dict)        
     else:
@@ -627,10 +620,13 @@ def run_analyzer(short_profile,    module_names,
     test_file  = files_to_process[0]
     test_flight = load_flight( test_file, frame_dict, file_repository )
     logger.warning( 'test_file for prep_order(): '+ test_file)
-    test_param_names = test_flight.parameters.keys()
-    
-    #re-jigger to return, for profiles, the set of parameters we need to load
+    #test_param_names = test_flight.parameters.keys()
     test_node_mgr, test_process_order = prep_order(test_flight, frame_dict, start_datetime, available_nodes, requested_params)
+    if short_profile=='base':
+        series_to_load= []
+    else:
+        tpo=set(test_process_order)    
+        series_to_load = tpo.intersection(test_flight.series.keys())
     
     ### loop over files and compute nodes for each
     file_count = len(files_to_process)
@@ -641,16 +637,18 @@ def run_analyzer(short_profile,    module_names,
         file_start_time = time.time()
         flight_file          = os.path.basename(flight_path_and_file)
         logger.debug('starting '+ flight_file)
-        flight = load_flight(flight_path_and_file, frame_dict, file_repository)
+        flight = load_flight(flight_path_and_file, frame_dict, file_repository, series_to_load)
         output_path  = get_output_file(output_dir, flight_path_and_file, short_profile)
         logger.info(' *** Processing flight %s', flight_file)
         if mortal: #die on error
-            flight, res, params = analyze_one(flight, output_path, short_profile,  requested_params, available_nodes)  
+            flight, res, params = analyze_one(flight, output_path, short_profile,  
+                                                                  requested_params, available_nodes)  
             #, test_param_names, test_node_mgr, test_process_order)
             status='ok'
         else:    #capture failure and keep on chuggin'
             try: 
-                flight, res, params = analyze_one(flight, output_path, short_profile, requested_params, available_nodes) 
+                flight, res, params = analyze_one(flight, output_path, short_profile, 
+                                                                      requested_params, available_nodes) 
                 #, test_param_names, test_node_mgr, test_process_order)
                 status='ok'
             except: 

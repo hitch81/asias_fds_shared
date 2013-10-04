@@ -106,11 +106,14 @@ def get_flight_record(flight_file, start_datetime, aircraft_info, output_path_an
     source_file = os.path.basename(flight_file)
     base_file = os.path.basename(output_path_and_file)
 
-    st = start_datetime
-    stt=list(st.timetuple()[:])    
-    stt[2]=1 #ensure date of month = 1
-    dtmon = datetime(*stt[0:3])
-
+    if start_datetime:
+        st = start_datetime
+        stt=list(st.timetuple()[:])    
+        stt[2]=1 #ensure date of month = 1
+        dtmon = datetime(*stt[0:3])
+    else: 
+        dtmon = None
+        
     flt = OrderedDict([ ('file_repository',file_repository), ('source_file',source_file), 
                         ('file_path', output_path_and_file), ('base_file_path', base_file), 
                         ('tail_number',registration), 
