@@ -57,8 +57,8 @@ class Flight(object):
         self.superframe_present = 1
         self.hdfaccess_version = 1 #=version in hdf5 attributes
         self.reliable_frame_counter = 1
-        
-    def load_from_hdf5(self, flight_dict, required_series=[]):
+
+    def load_from_hdf5(self, flight_dict, required_series=[]): #all_hdfseries, 
         '''load data from an hdf flight data file
             flight_series is a dictionary with fields:  'filepath', 'aircraft_info', 'repo'        
         '''
@@ -74,16 +74,15 @@ class Flight(object):
             self.hdfaccess_version =  ff.hdfaccess_version 
             self.reliable_frame_counter = ff.reliable_frame_counter 
             
-            # for profiles we can choose to load only selected series    
-            all_series = ff.keys()
+            # for profiles we can choose to load only selected series   
             if required_series==[]:
-                 series_to_load = all_series
+                 series_to_load = ff.keys() #all_hdfseries
             else:
-                series_to_load = frozenset(required_series).intersection( frozenset(all_series) )
-
+                series_to_load = frozenset(required_series).intersection( frozenset(ff.keys()) )
+                            
             for k in series_to_load:
                 self.series[k] =  ff.get_param(k, valid_only=False)
-                if  self.series[k].lfl==1 or self.series[k].lfl==True:  
+                if  self.series[k].lfl==True:  
                     self.lfl_params.append(k)                     
                 is_invalid =self.series[k].invalid
                 if is_invalid is None or is_invalid==False:
@@ -268,91 +267,6 @@ def get_output_file(OUTPUT_DIR, flight_path_and_file, profile):
 
 
 
-def get_frequency_offset(mynode, deps):
-        """
-        adapted from node get_derived(self, deps)
-        
-        get_frequency_offset( ( flight.parameters['Airspeed'], flight.parameters['Altitude AAL'], .. ) )
-
-        :param args: List of available Parameter objects
-        :type args: list
-        :returns:  frequency, offset 
-        """
-        frequency=None
-        offset=None
-        dependencies_to_align = [d for d in deps if d is not None and d.frequency]
-        if dependencies_to_align and mynode.align:
-            if mynode.align_frequency and mynode.align_offset is not None:
-                # align to the class declared frequency and offset
-                frequency = mynode.align_frequency
-                offset = mynode.align_offset
-            elif mynode.align_frequency:
-                # align to class frequency, but set offset to first dependency
-                # This will cause a problem during alignment if the offset is
-                # greater than the frequency allows (e.g. 0.6 offset for a 2Hz
-                # parameter). It may be best to always define a suitable
-                # align_offset.
-                frequency = mynode.align_frequency
-                offset = dependencies_to_align[0].offset
-            elif mynode.align_offset is not None:
-                # align to class offset, but set frequency to first dependency
-                frequency = dependencies_to_align[0].frequency
-                offset = mynode.align_offset
-            else:
-                # This is the class' default behaviour:
-                # align both frequency and offset to the first parameter
-                alignment_param = dependencies_to_align.pop(0)
-                frequency = alignment_param.frequency
-                offset = alignment_param.offset
-        return frequency, offset
-
-
-def get_deps_series(node_class, params, node_mgr, pre_aligned):
-        # build ordered dependencies without touching hdf file
-        # 'params' is a dictionary of previously computed nodes
-        # pre_aligned is a dictionary of pre-aligned params, key=(name, frequency, offset)
-        deps = []
-        nd = node_class()
-        logger.debug( 'deps of'+ nd.name+ '  deps: '+ str(node_class.get_dependency_names()) )
-        node_deps = node_class.get_dependency_names()
-        for dep_name in node_deps:
-            if dep_name in params:  # already calculated
-                deps.append(params[dep_name])
-            elif node_mgr.get_attribute(dep_name) is not None:
-                deps.append(node_mgr.get_attribute(dep_name))                
-            else:  # dependency not available
-                deps.append(None)
-
-        if all([d is None for d in deps]):
-            #print node_deps, deps
-            logger.warning("No dependencies available: "+str(node_deps))
-            raise RuntimeError("No dependencies available - Nodes cannot "
-                               "operate without ANY dependencies available! "
-                               "Node: %s" % node_class.__name__)
-
-        #pre-align
-        frequency, offset = get_frequency_offset(node_class, deps)
-        nodestr= '\t  dep_name:'+ dep_name + ',  hdf?'+ str(dep_name in node_mgr.hdf_keys) + ',  freq:'+str(frequency) + ',  offset:'+str(offset)
-        aligned_deps = []        
-        for d in deps:
-            if d is None or frequency is None or offset is None:
-                aligned_deps.append(d)
-            elif d.name in params:
-                if pre_aligned.has_key((d.name, frequency, offset)):
-                    logger.debug( nodestr +  '---using pre-aligned')
-                    aligned_deps.append(  pre_aligned[(d.name, frequency, offset)]  )
-                else: 
-                    node = node_class()
-                    node.frequency = frequency
-                    node.offset = offset
-                    logger.debug( nodestr +  '***pre-aligning')
-                    pre_aligned[(d.name, frequency, offset)] = d.get_aligned(node)
-                    aligned_deps.append(  pre_aligned[(d.name, frequency, offset)]  )
-            else:
-                aligned_deps.append(d)                    
-        return aligned_deps, pre_aligned
-        
-
 ###node post-processing
 def align_section(result, duration, section_list):
     aligned_section = result.get_aligned(P(frequency=1, offset=0))
@@ -434,6 +348,97 @@ def check_derived_array(param_name, result, duration ):
         raise ValueError("Array length mismatch for parameter "
                          "'%s'. Expected '%s', resulting array length '%s'." % (param_name, expected_length, array_length))
     return result
+
+###########################################
+def get_frequency_offset(mynode, deps):
+        """
+        adapted from node get_derived(self, deps)
+        
+        get_frequency_offset( ( flight.parameters['Airspeed'], flight.parameters['Altitude AAL'], .. ) )
+
+        :param args: List of available Parameter objects
+        :type args: list
+        :returns:  frequency, offset 
+        """
+        frequency=None
+        offset=None
+        dependencies_to_align = [d for d in deps if d is not None and d.frequency]
+        if dependencies_to_align and mynode.align:
+            if mynode.align_frequency and mynode.align_offset is not None:
+                # align to the class declared frequency and offset
+                frequency = mynode.align_frequency
+                offset = mynode.align_offset
+            elif mynode.align_frequency:
+                # align to class frequency, but set offset to first dependency
+                # This will cause a problem during alignment if the offset is
+                # greater than the frequency allows (e.g. 0.6 offset for a 2Hz
+                # parameter). It may be best to always define a suitable
+                # align_offset.
+                frequency = mynode.align_frequency
+                offset = dependencies_to_align[0].offset
+            elif mynode.align_offset is not None:
+                # align to class offset, but set frequency to first dependency
+                frequency = dependencies_to_align[0].frequency
+                offset = mynode.align_offset
+            else:
+                # This is the class' default behaviour:
+                # align both frequency and offset to the first parameter
+                alignment_param = dependencies_to_align.pop(0)
+                frequency = alignment_param.frequency
+                offset = alignment_param.offset
+        else:
+                frequency = mynode.frequency if hasattr(mynode, 'frequency') else 1.0
+                offset = mynode.offset if hasattr(mynode, 'attribute') else 0.0
+        return frequency, offset, dependencies_to_align
+
+
+def get_deps_series(node_class, params, node_mgr, pre_aligned):
+        # build ordered and aligned dependencies without touching an hdf file
+        # 'params' is a dictionary of previously computed nodes: time series, kpv, etc.
+        # pre_aligned is a dictionary of pre-aligned params, key=(name, frequency, offset)
+        deps = []
+        nd = node_class()
+        node_deps = node_class.get_dependency_names()
+        logger.debug( 'deps of'+ nd.name+ '  deps: '+ str(node_deps) )
+
+        # need to augment params with pre-aligned
+        for dep_name in node_deps:            
+            if dep_name in params:  # already calculated
+                deps.append(params[dep_name])
+            elif node_mgr.get_attribute(dep_name) is not None:
+                deps.append(node_mgr.get_attribute(dep_name))                
+            else:  # dependency not available
+                logger.info('dep_name not added in get_deps: '+dep_name)
+                deps.append(None)
+
+        #pdb.set_trace()
+        if all([d is None for d in deps]):
+            #print node_deps, deps
+            logger.warning("No dependencies available: "+str(node_deps))
+            raise RuntimeError("No dependencies available - Nodes cannot "
+                               "operate without ANY dependencies available! "
+                               "Node: %s" % node_class.__name__)
+
+        frequency, offset, deps_to_align = get_frequency_offset(node_class, deps) 
+        nd.frequency = frequency
+        nd.offset = offset
+        #pre-align
+        aligned_deps = []        
+        for d in deps:
+            if d in deps_to_align:
+                nodestr= '\t  dep_name:'+ d.name + ',  hdf?'+ str(d.name in node_mgr.hdf_keys) + ',  freq:'+str(frequency) + ',  offset:'+str(offset)
+                if pre_aligned.has_key((d.name, frequency, offset)):
+                    logger.debug( nodestr +  '---using pre-aligned')
+                    aligned_deps.append(  pre_aligned[(d.name, frequency, offset)]  )
+                else: 
+                    logger.debug( nodestr +  '***pre-aligning')
+                    pre_aligned[(d.name, frequency, offset)] = d.get_aligned(nd)
+                    aligned_deps.append(  pre_aligned[(d.name, frequency, offset)]  )
+            else: #no need to worry about alignment
+                aligned_deps.append( d )
+        return aligned_deps, pre_aligned, nd
+        
+
             
 
 def derive_parameters_series(duration, node_mgr, process_order, precomputed={}):
@@ -489,17 +494,18 @@ def derive_parameters_series(duration, node_mgr, process_order, precomputed={}):
         logger.info('_derive_: computing '+param_name)        
         node_class = node_mgr.derived_nodes[param_name]  #NB raises KeyError if Node is "unknown"
         try:        
-            deps, pre_aligned = get_deps_series(node_class, params, node_mgr, pre_aligned )
+            deps, pre_aligned, node = get_deps_series(node_class, params, node_mgr, pre_aligned )
         except:
             logger.exception('ERROR '+param_name+' get_deps')
             continue
         
-        node = node_class()
         try:
-            result = node.get_derived(deps)
+            node.derive(*deps) #node.get_derived(deps)
+            result = node
         except:
             logger.exception('ERROR '+param_name+' get_derived')
             continue            
+        
         ###############################################################
         #def post_process_node(flight, node, param_name, result, res, params)
 
@@ -551,8 +557,8 @@ def derive_parameters_series(duration, node_mgr, process_order, precomputed={}):
 def analyze_one(flight, output_path, profile, requested_params, available_nodes): 
         # , test_param_names, test_node_mgr, test_process_order):
         '''analyze one flight'''
-        precomputed_parameters=flight.parameters.copy()        
-        available_nodes_copy = available_nodes #copy.deepcopy(available_nodes)
+        precomputed_parameters = flight.parameters.copy()        
+        available_nodes_copy        = available_nodes #copy.deepcopy(available_nodes)
         #if flight.parameters.keys() != test_param_names: #rats, have to redo this
         node_mgr = node.NodeManager( 
                 flight.start_datetime, flight.duration,
@@ -571,7 +577,7 @@ def analyze_one(flight, output_path, profile, requested_params, available_nodes)
         return flight, res, params
 
 
-def load_flight(filepath, frame_dict, file_repository, series_to_load=[]):
+def load_flight(filepath, frame_dict, frame_hdfseries, file_repository, series_to_load=[]):
     '''load a Flight object'''
     aircraft_info = get_aircraft_info( filepath, frame_dict)                
     
@@ -581,12 +587,19 @@ def load_flight(filepath, frame_dict, file_repository, series_to_load=[]):
     flight.file_repository = file_repository
     flight.aircraft_info = aircraft_info        
     if filepath.endswith('.hdf5'):
+        #lfl = aircraft_info['Frame']
+        #if frame_hdfseries.has_key(lfl):
+        #    all_hdfseries = frame_hdfseries[lfl]
+        #else:
+        #    with hdfaccess.file.hdf_file(filepath) as ff:
+        #        all_hdfseries = ff.keys()
+        #    frame_hdfseries[lfl] = all_hdfseries            
         flight.load_from_hdf5(flight_dict, required_series=series_to_load)        
     #elif filepath.endswith('.ffd'):
     #   flight.load_from_flight(flight_dict)        
     else:
         print 'Aack!!! Unknown file type'
-    return flight
+    return flight, frame_hdfseries
     
 def analyzer_fail(flight_file):
         ex_type, ex, tracebck = sys.exc_info()
@@ -614,11 +627,13 @@ def run_analyzer(short_profile,    module_names,
         return
     timestamp = datetime.now()
     frame_dict = frame_list.build_frame_list(logger)
+    frame_hdfseries = {} # for each lfl, keep a list of available hdf series
     cn = fds_oracle.get_connection() if save_oracle else None   
 
     requested_params, available_nodes = prep_nodes(short_profile, module_names, include_flight_attributes)
-    test_file  = files_to_process[0]
-    test_flight = load_flight( test_file, frame_dict, file_repository )
+    test_file    = files_to_process[0]
+    
+    test_flight, frame_hdfseries = load_flight( test_file, frame_dict, frame_hdfseries, file_repository )
     logger.warning( 'test_file for prep_order(): '+ test_file)
     #test_param_names = test_flight.parameters.keys()
     test_node_mgr, test_process_order = prep_order(test_flight, frame_dict, start_datetime, available_nodes, requested_params)
@@ -637,7 +652,7 @@ def run_analyzer(short_profile,    module_names,
         file_start_time = time.time()
         flight_file          = os.path.basename(flight_path_and_file)
         logger.debug('starting '+ flight_file)
-        flight = load_flight(flight_path_and_file, frame_dict, file_repository, series_to_load)
+        flight, frame_hdfseries = load_flight(flight_path_and_file, frame_dict, frame_hdfseries, file_repository, series_to_load)
         output_path  = get_output_file(output_dir, flight_path_and_file, short_profile)
         logger.info(' *** Processing flight %s', flight_file)
         if mortal: #die on error
