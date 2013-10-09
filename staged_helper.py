@@ -177,15 +177,22 @@ def pkl_suffix():
     '''file suffix versioning'''
     return 'ver'+analyzer_version.replace('.','_') +'.pkl'  # eg 0.0.5 => ver0_0_5.pkl
 
-def get_precomputed_parameters(flight_path_and_file, flight):    
-    ''' if pkl file exists and matches version, in read it into params dict'''
+def get_precomputed_parameters(flight):    #flight_path_and_file, flight):    
+    ''' if pkl file exists and matches version, read it into params dict'''
     # suffix includes FDS version as a compatibility check
-    source_file = flight_path_and_file.replace('.hdf5', pkl_suffix())
-    precomputed_parameters={}
+    #source_file = flight_path_and_file.replace('.hdf5', pkl_suffix())
+    #precomputed_parameters={}
+    precomputed_parameters = flight.parameters.copy()        
+    if flight.filepath.find('.hdf5')<0:
+        return precomputed_parameters
+        
+    source_file = flight.filepath.replace('.hdf5', pkl_suffix()) 
     if os.path.isfile(source_file):
         logger.info('get_precomputed_profiles. found: '+ source_file)
+        #pdb.set_trace()
         with open(source_file, 'rb') as pkl_file:
-            precomputed_parameters = pickle.load(pkl_file)
+            pickled_parameters = pickle.load(pkl_file)
+        precomputed_parameters.update(pickled_parameters)
     else:
         logger.info('No compatible precomputed profile found')
     return precomputed_parameters
@@ -240,8 +247,13 @@ def prep_nodes(short_profile, module_names, include_flight_attributes):
 def prep_order(flight, frame_dict, start_datetime, derived_nodes, required_params):
     ''' open example HDF to see recorded params and build process order'''
     derived_nodes_copy = derived_nodes   #copy.deepcopy(derived_nodes)  #
+    precomputed_parameters = get_precomputed_parameters(flight)
+    precomputed_keys=precomputed_parameters.keys()
+    for k in flight.series.keys():
+        if k not in precomputed_keys:
+            precomputed_keys.append(k)
     node_mgr = NodeManager( start_datetime, flight.duration, 
-                            flight.series.keys(),       #from HDF.   was hdf.valid_param_names(), #hdf_keys; should be from LFL
+                            precomputed_keys, #flight.series.keys(),       #from HDF.   was hdf.valid_param_names(), #hdf_keys; should be from LFL
                             required_params,   #requested
                             derived_nodes_copy,     #methods that can be computed; equals profile + base nodes   ????
                             flight.aircraft_info, 
@@ -557,12 +569,13 @@ def derive_parameters_series(duration, node_mgr, process_order, precomputed={}):
 def analyze_one(flight, output_path, profile, requested_params, available_nodes): 
         # , test_param_names, test_node_mgr, test_process_order):
         '''analyze one flight'''
-        precomputed_parameters = flight.parameters.copy()        
+        #precomputed_parameters = flight.parameters.copy()        
+        precomputed_parameters = get_precomputed_parameters(flight)
         available_nodes_copy        = available_nodes #copy.deepcopy(available_nodes)
         #if flight.parameters.keys() != test_param_names: #rats, have to redo this
         node_mgr = node.NodeManager( 
                 flight.start_datetime, flight.duration,
-                flight.parameters.keys(), #series keys include invalid series
+                precomputed_parameters.keys(), #flight.parameters.keys(), 
                 requested_params, available_nodes_copy, flight.aircraft_info,
                 achieved_flight_record=flight.achieved_flight_record
               )                  
@@ -636,13 +649,17 @@ def run_analyzer(short_profile,    module_names,
     test_flight, frame_hdfseries = load_flight( test_file, frame_dict, frame_hdfseries, file_repository )
     logger.warning( 'test_file for prep_order(): '+ test_file)
     #test_param_names = test_flight.parameters.keys()
-    test_node_mgr, test_process_order = prep_order(test_flight, frame_dict, start_datetime, available_nodes, requested_params)
+    test_node_mgr, test_process_order = prep_order(test_flight, frame_dict, start_datetime, 
+                                                                                   available_nodes, requested_params)
     if short_profile=='base':
         series_to_load= []
     else:
         tpo=set(test_process_order)    
         series_to_load = tpo.intersection(test_flight.series.keys())
-    
+    print 'SERIES TO LOAD'
+    for s in series_to_load:
+        print s
+        
     ### loop over files and compute nodes for each
     file_count = len(files_to_process)
     logger.warning( 'Processing '+str(file_count)+' files.' )
