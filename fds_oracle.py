@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Database routines -- Oracle 
+Database routines -- Oracle stuff
 
 @author: keithc
 """
