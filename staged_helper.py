@@ -65,6 +65,9 @@ class Flight(object):
         # look up aircraft info by tail number
         self.filepath = flight_dict['filepath']
         self.aircraft_info  = flight_dict['aircraft_info']
+        if not os.path.exists(self.filepath):
+            logger.warning('cannot find: '+ self.filepath)
+            #pdb.set_trace()
                 
         with hdfaccess.file.hdf_file(self.filepath) as ff:
             self.duration = ff.duration
