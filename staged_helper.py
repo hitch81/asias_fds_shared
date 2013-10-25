@@ -31,6 +31,7 @@ import hdfaccess.file
 import fds_oracle
 import frame_list # map of tail# to LFLs
 from frame_list import get_aircraft_info
+import load_apt_rwy
 logger = logging.getLogger(__name__) #for process_short)_
 
 
@@ -161,7 +162,6 @@ def initialize_logger(LOG_LEVEL, filename='log_messages.txt'):
     return logger
 
 
-
 def make_kml_file(start_datetime, flight_attrs, kti, kpv, flight_file, REPORTS_DIR, output_path_and_file): 
     '''adapted from FDS process_flight.  As of 2013/6/6 we do not geolocate unless KML was requested, to save time.'''
     from analysis_engine.plot_flight    import track_to_kml
@@ -186,7 +186,8 @@ def get_precomputed_parameters(flight):    #flight_path_and_file, flight):
     #source_file = flight_path_and_file.replace('.hdf5', pkl_suffix())
     #precomputed_parameters={}
     precomputed_parameters = flight.parameters.copy()        
-    if flight.filepath.find('.hdf5')<0:
+    #if flight.filepath.find('.hdf5')<0:
+    if True:
         return precomputed_parameters
         
     source_file = flight.filepath.replace('.hdf5', pkl_suffix()) 
@@ -456,7 +457,7 @@ def get_deps_series(node_class, params, node_mgr, pre_aligned):
 
             
 
-def derive_parameters_series(duration, node_mgr, process_order, precomputed={}):
+def derive_parameters_series(flight, node_mgr, process_order, precomputed={}, mortal=True):
     '''
     Non HDF5 version. Suitable for FFD and Notebook profile development.
     
@@ -471,6 +472,7 @@ def derive_parameters_series(duration, node_mgr, process_order, precomputed={}):
     :param process_order: Parameter / Node class names in the required order to be processed
     :type process_order: list of strings
     '''
+    duration = flight.duration
     params    = precomputed #{}   # dictionary of derived params that aren't masked arrays
     pre_aligned = {} #key = (name, frequency, offset)
     res     = {'series':{}, 
@@ -508,18 +510,23 @@ def derive_parameters_series(duration, node_mgr, process_order, precomputed={}):
         ####compute###########################################################    
         logger.info('_derive_: computing '+param_name)        
         node_class = node_mgr.derived_nodes[param_name]  #NB raises KeyError if Node is "unknown"
-        try:        
-            deps, pre_aligned, node = get_deps_series(node_class, params, node_mgr, pre_aligned )
-        except:
-            logger.exception('ERROR '+param_name+' get_deps')
-            continue
-        
-        try:
-            node.derive(*deps) #node.get_derived(deps)
-            result = node
-        except:
-            logger.exception('ERROR '+param_name+' get_derived')
-            continue            
+        if mortal:
+                deps, pre_aligned, node = get_deps_series(node_class, params, node_mgr, pre_aligned )
+                node.derive(*deps) #node.get_derived(deps)
+                result = node        
+        else:
+            try:        
+                deps, pre_aligned, node = get_deps_series(node_class, params, node_mgr, pre_aligned )
+            except:
+                logger.exception('ERROR '+param_name+' get_deps')
+                continue
+            
+            try:
+                node.derive(*deps) #node.get_derived(deps)
+                result = node
+            except:
+                logger.exception('ERROR '+param_name+' get_derived')
+                continue            
         
         ###############################################################
         #def post_process_node(flight, node, param_name, result, res, params)
@@ -569,7 +576,7 @@ def derive_parameters_series(duration, node_mgr, process_order, precomputed={}):
 
 ###################################################################################################
 
-def analyze_one(flight, output_path, profile, requested_params, available_nodes): 
+def analyze_one(flight, output_path, profile, requested_params, available_nodes, mortal): 
         # , test_param_names, test_node_mgr, test_process_order):
         '''analyze one flight'''
         #precomputed_parameters = flight.parameters.copy()        
@@ -582,8 +589,10 @@ def analyze_one(flight, output_path, profile, requested_params, available_nodes)
                 requested_params, available_nodes_copy, flight.aircraft_info,
                 achieved_flight_record=flight.achieved_flight_record
               )                  
+        #pdb.set_trace()
         process_order, gr_st = dependency_order(node_mgr, draw=False) 
-        res, params = derive_parameters_series(flight.duration, node_mgr, process_order, precomputed_parameters)
+        res, params = derive_parameters_series(flight, node_mgr, process_order, 
+                                                                         precomputed_parameters, mortal)
         #post-process: save
         for k in res['series'].keys():
                 flight.parameters[k] = res['series'][k]
@@ -592,8 +601,22 @@ def analyze_one(flight, output_path, profile, requested_params, available_nodes)
             dump_pickles(output_path, params, res['kti'], res['kpv'], res['phase'], res['approach'], res['attr'], logger)
         return flight, res, params
 
+def load_afr(fltrec, apt_dict, apt_rwy_dict):
+        afr = {}
+        orig = fltrec.get('Takeoff ICAO')
+        dest = fltrec.get('Landing ICAO')
+        if  apt_dict.has_key(orig):            
+            afr['AFR Takeoff Airport'] = apt_dict.get(orig) 
+            if  apt_rwy_dict[orig].has_key(fltrec['Takeoff Runway']):
+                afr['AFR Takeoff Runway'] = apt_rwy_dict[orig].get( fltrec['Takeoff Runway']  ) 
+        if  apt_dict.has_key(dest):
+            afr['AFR Landing Airport'] = apt_dict.get(dest) 
+            if  apt_rwy_dict[dest].has_key(fltrec['Landing Runway']):
+                afr['AFR Landing Runway'] = apt_rwy_dict[dest].get( fltrec['Landing Runway']  )             
+        return afr
 
-def load_flight(filepath, frame_dict, frame_hdfseries, file_repository, series_to_load=[]):
+def load_flight(filepath, frame_dict, frame_hdfseries, file_repository, 
+                         series_to_load=[], flightrec_dict=None, apt_dict=None, apt_rwy_dict=None):
     '''load a Flight object'''
     aircraft_info = get_aircraft_info( filepath, frame_dict)                
     
@@ -602,14 +625,13 @@ def load_flight(filepath, frame_dict, frame_hdfseries, file_repository, series_t
     flight = Flight()   
     flight.file_repository = file_repository
     flight.aircraft_info = aircraft_info        
+    
+    if flightrec_dict and apt_dict and apt_rwy_dict and flightrec_dict.has_key(filepath):
+        logger.info("have an AFR for: "+ filepath)
+        fltrec = flightrec_dict[filepath]
+        flight.achieved_flight_record = load_afr(fltrec, apt_dict, apt_rwy_dict)
+
     if filepath.endswith('.hdf5'):
-        #lfl = aircraft_info['Frame']
-        #if frame_hdfseries.has_key(lfl):
-        #    all_hdfseries = frame_hdfseries[lfl]
-        #else:
-        #    with hdfaccess.file.hdf_file(filepath) as ff:
-        #        all_hdfseries = ff.keys()
-        #    frame_hdfseries[lfl] = all_hdfseries            
         flight.load_from_hdf5(flight_dict, required_series=series_to_load)        
     #elif filepath.endswith('.ffd'):
     #   flight.load_from_flight(flight_dict)        
@@ -622,10 +644,11 @@ def analyzer_fail(flight_file):
         logger.warning('ANALYZER ERROR '+flight_file)
         traceback.print_tb(tracebck)        
         return tracebck               
-    
+
         
 def run_analyzer(short_profile,    module_names,
                  logger,           files_to_process,    input_dir,        output_dir,       reports_dir, 
+                 flightrec_dict=None,     
                  include_flight_attributes=False, make_kml=False,   
                  save_oracle=True, comment='',
                  file_repository='linux', 
@@ -635,7 +658,9 @@ def run_analyzer(short_profile,    module_names,
     run FlightDataAnalyzer for analyze and profile. mostly file mgmt and reporting.
     currently runs against a single fleet at a time.
     
-    TODO: add loop per fleet, speed up repair mask
+    afr_dict is an optional dictionary mapping file paths to airport/runway attributes
+    
+    TODO: add loop per fleet
     '''
     print 'mortal', mortal
     if not files_to_process or len(files_to_process)==0:
@@ -644,12 +669,24 @@ def run_analyzer(short_profile,    module_names,
     timestamp = datetime.now()
     frame_dict = frame_list.build_frame_list(logger)
     frame_hdfseries = {} # for each lfl, keep a list of available hdf series
+    
+    # get frame info    
+    
     cn = fds_oracle.get_connection() if save_oracle else None   
+
+    #load airport and runway info
+    cur = cn.cursor()
+    apt_dict = load_apt_rwy.get_apt_dict(cur)
+    print  "apt_dict['KEWR']", apt_dict['KEWR']      
+    apt_rwy_dict = load_apt_rwy.get_apt_rwy_dict(cur)
+    cur.close()
 
     requested_params, available_nodes = prep_nodes(short_profile, module_names, include_flight_attributes)
     test_file    = files_to_process[0]
     
-    test_flight, frame_hdfseries = load_flight( test_file, frame_dict, frame_hdfseries, file_repository )
+    test_flight, frame_hdfseries = load_flight( test_file, frame_dict, frame_hdfseries, file_repository, 
+                                                                       flightrec_dict=flightrec_dict, 
+                                                                       apt_dict=apt_dict, apt_rwy_dict=apt_rwy_dict  )
     logger.warning( 'test_file for prep_order(): '+ test_file)
     #test_param_names = test_flight.parameters.keys()
     test_node_mgr, test_process_order = prep_order(test_flight, frame_dict, start_datetime, 
@@ -671,19 +708,22 @@ def run_analyzer(short_profile,    module_names,
         status=None
         file_start_time = time.time()
         flight_file          = os.path.basename(flight_path_and_file)
-        logger.debug('starting '+ flight_file)
-        flight, frame_hdfseries = load_flight(flight_path_and_file, frame_dict, frame_hdfseries, file_repository, series_to_load)
+        logger.warning('starting '+ flight_file)
+        flight, frame_hdfseries = load_flight(flight_path_and_file, frame_dict, frame_hdfseries, file_repository, 
+                                                                 series_to_load=series_to_load, 
+                                                                 flightrec_dict=flightrec_dict,
+                                                                 apt_dict=apt_dict, apt_rwy_dict=apt_rwy_dict  )
         output_path  = get_output_file(output_dir, flight_path_and_file, short_profile)
         logger.info(' *** Processing flight %s', flight_file)
         if mortal: #die on error
             flight, res, params = analyze_one(flight, output_path, short_profile,  
-                                                                  requested_params, available_nodes)  
+                                                                  requested_params, available_nodes, mortal)  
             #, test_param_names, test_node_mgr, test_process_order)
             status='ok'
         else:    #capture failure and keep on chuggin'
             try: 
                 flight, res, params = analyze_one(flight, output_path, short_profile, 
-                                                                      requested_params, available_nodes) 
+                                                                      requested_params, available_nodes, mortal) 
                 #, test_param_names, test_node_mgr, test_process_order)
                 status='ok'
             except: 
