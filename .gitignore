@@ -2,6 +2,7 @@ frame_list.py
 analyser_custom_settings.py
 connection.txt
 *.pyc
+*.*~
 *.docx
 *.doc
 *.xlsx

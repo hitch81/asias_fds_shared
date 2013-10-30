@@ -223,7 +223,7 @@ def dump_pickles(output_path_and_file, params, kti, kpv, phases, approach, fligh
 
 ### run FlightDataAnalyzer for analyze and profile
 
-def prep_nodes(short_profile, module_names, include_flight_attributes):
+def prep_nodes(short_profile, module_names):
     ''' go through modules to get derived nodes '''
     if short_profile=='base':
         requested_nodes  = get_derived_nodes(settings.NODE_MODULES + module_names)
@@ -239,8 +239,7 @@ def prep_nodes(short_profile, module_names, include_flight_attributes):
                       # 'Configuration',
                       ]
         requested_params = sorted( set(requested_params) - set(exclusions)) #exclude select params from FDS set              
-        if include_flight_attributes:
-            requested_params = list(set( requested_params + get_derived_nodes(['analysis_engine.flight_attribute']).keys()))            
+        requested_params = list(set( requested_params + get_derived_nodes(['analysis_engine.flight_attribute']).keys()))            
     else:
         requested_nodes   = get_derived_nodes(module_names)    
         available_nodes  = get_derived_nodes(settings.NODE_MODULES + module_names)
@@ -510,23 +509,19 @@ def derive_parameters_series(flight, node_mgr, process_order, precomputed={}, mo
         ####compute###########################################################    
         logger.info('_derive_: computing '+param_name)        
         node_class = node_mgr.derived_nodes[param_name]  #NB raises KeyError if Node is "unknown"
-        if mortal:
-                deps, pre_aligned, node = get_deps_series(node_class, params, node_mgr, pre_aligned )
-                node.derive(*deps) #node.get_derived(deps)
-                result = node        
-        else:
-            try:        
-                deps, pre_aligned, node = get_deps_series(node_class, params, node_mgr, pre_aligned )
-            except:
-                logger.exception('ERROR '+param_name+' get_deps')
-                continue
-            
-            try:
-                node.derive(*deps) #node.get_derived(deps)
-                result = node
-            except:
-                logger.exception('ERROR '+param_name+' get_derived')
-                continue            
+
+        try:        
+            deps, pre_aligned, node = get_deps_series(node_class, params, node_mgr, pre_aligned )
+        except:
+            logger.exception('ERROR '+param_name+' get_deps')
+            raise
+        
+        try:
+            node.derive(*deps) #node.get_derived(deps)
+            result = node
+        except:
+            logger.exception('ERROR '+param_name+' get_derived')
+            raise            
         
         ###############################################################
         #def post_process_node(flight, node, param_name, result, res, params)
@@ -615,6 +610,7 @@ def load_afr(fltrec, apt_dict, apt_rwy_dict):
                 afr['AFR Landing Runway'] = apt_rwy_dict[dest].get( fltrec['Landing Runway']  )             
         return afr
 
+
 def load_flight(filepath, frame_dict, frame_hdfseries, file_repository, 
                          series_to_load=[], flightrec_dict=None, apt_dict=None, apt_rwy_dict=None):
     '''load a Flight object'''
@@ -647,9 +643,10 @@ def analyzer_fail(flight_file):
 
         
 def run_analyzer(short_profile,    module_names,
-                 logger,           files_to_process,    input_dir,        output_dir,       reports_dir, 
-                 flightrec_dict=None,     
-                 include_flight_attributes=False, make_kml=False,   
+                 LOG_LEVEL,           files_to_process,   
+                 input_dir,        output_dir,       reports_dir, 
+                 flightrec_dict=None,     #for AFR
+                 make_kml=False,   
                  save_oracle=True, comment='',
                  file_repository='linux', 
                  start_datetime = datetime(2012, 4, 1, 0, 0, 0), 
@@ -663,6 +660,7 @@ def run_analyzer(short_profile,    module_names,
     TODO: add loop per fleet
     '''
     print 'mortal', mortal
+    logger = initialize_logger(LOG_LEVEL)
     if not files_to_process or len(files_to_process)==0:
         logger.warning('run_analyzer: No files to process.')
         return
@@ -681,7 +679,7 @@ def run_analyzer(short_profile,    module_names,
     apt_rwy_dict = load_apt_rwy.get_apt_rwy_dict(cur)
     cur.close()
 
-    requested_params, available_nodes = prep_nodes(short_profile, module_names, include_flight_attributes)
+    requested_params, available_nodes = prep_nodes(short_profile, module_names)
     test_file    = files_to_process[0]
     
     test_flight, frame_hdfseries = load_flight( test_file, frame_dict, frame_hdfseries, file_repository, 
@@ -696,9 +694,9 @@ def run_analyzer(short_profile,    module_names,
     else:
         tpo=set(test_process_order)    
         series_to_load = tpo.intersection(test_flight.series.keys())
-    print 'SERIES TO LOAD'
-    for s in series_to_load:
-        print s
+    #print 'SERIES TO LOAD'
+    #for s in series_to_load:
+    #   print s
         
     ### loop over files and compute nodes for each
     file_count = len(files_to_process)
@@ -741,18 +739,20 @@ def run_analyzer(short_profile,    module_names,
                                       file_repository, input_dir, output_dir, 
                                       len(files_to_process), (time.time()-start_time), logger, db_connection=cn)
     if save_oracle:  cn.close()
-    return flight
+    #for handler in logger.handlers(): handler.close()
+    return #flight
     
 
-def parallel_directview(PROFILE_NAME, module_names, FILE_REPOSITORY, LOG_LEVEL, 
-               FILES_TO_PROCESS, COMMENT, MAKE_KML_FILES ):
+def parallel_directview_generic(PROFILE_NAME, module_names, FILE_REPOSITORY, LOG_LEVEL, 
+               FILES_TO_PROCESS, input_dir, output_dir, reports_dir,
+               COMMENT, MAKE_KML_FILES ):
     '''sets up worker namespaces for ipython parallel runs'''
     print "Run 'ipcluster start -n 10' from the command line first!"
     #from IPython import parallel
     from IPython.parallel import Client
     c=Client()  #c=Client(debug=True)
     print c.ids
-    engine_count = len(c.ids)
+    #engine_count = len(c.ids)
     dview = c[:]  #DirectView list of engines
     dview.clear() #clean up the namespaces on the eng
     dview.block = True           
@@ -770,12 +770,25 @@ def parallel_directview(PROFILE_NAME, module_names, FILE_REPOSITORY, LOG_LEVEL,
     output_dir = settings.PROFILE_DATA_PATH + PROFILE_NAME+'/'   
     if not os.path.exists(output_dir): 
         os.makedirs(output_dir)
-    dview['output_dir '] = output_dir 
+    dview['input_dir ']    =  input_dir 
+    dview['output_dir ']  =  output_dir 
     dview['reports_dir '] =  reports_dir 
     
-    logger = logging.Logger('ipcluster')
-    logger.setLevel(LOG_LEVEL)
-    dview['logger'] = logger
+    #logger = logging.Logger('ipcluster')
+    #logger.setLevel(LOG_LEVEL)
+    #dview['logger'] = logger
+    return dview
+
+
+def parallel_directview(PROFILE_NAME, module_names, FILE_REPOSITORY, LOG_LEVEL, 
+               FILES_TO_PROCESS, COMMENT, MAKE_KML_FILES ):
+    '''sets up PROFILE worker namespaces for ipython parallel runs'''
+    input_dir = "N/A"    
+    output_dir = settings.PROFILE_DATA_PATH + PROFILE_NAME+'/'   
+    reports_dir = settings.PROFILE_REPORTS_PATH                              
+    dview= parallel_directview_generic(PROFILE_NAME, module_names, FILE_REPOSITORY, LOG_LEVEL, 
+               FILES_TO_PROCESS, input_dir, output_dir, reports_dir,
+               COMMENT, MAKE_KML_FILES )
     return dview
 
 
@@ -784,8 +797,6 @@ def run_profile(profile_name, module_names,
                           FILE_REPOSITORY='central', save_oracle=True, mortal=True ):
 
     reports_dir = settings.PROFILE_REPORTS_PATH
-    logger = initialize_logger(LOG_LEVEL)
-    logger.warning('profile: '+profile_name)
     output_dir = settings.PROFILE_DATA_PATH + profile_name+'/' 
     if not os.path.exists(output_dir): 
         os.makedirs(output_dir)
@@ -794,16 +805,13 @@ def run_profile(profile_name, module_names,
 
     print 'calling run_analyzer'
     run_analyzer(profile_name, module_names, 
-             logger, FILES_TO_PROCESS, 
+             LOG_LEVEL, FILES_TO_PROCESS, 
              'NA', output_dir, reports_dir, 
-             include_flight_attributes=False, 
              make_kml=MAKE_KML_FILES, 
              save_oracle=save_oracle,
              comment=COMMENT,
              file_repository=FILE_REPOSITORY,
-             mortal=mortal)   
-     
-    for handler in logger.handlers: handler.close()        
+             mortal=mortal)        
     return
      
 
