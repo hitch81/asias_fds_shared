@@ -456,7 +456,7 @@ def get_deps_series(node_class, params, node_mgr, pre_aligned):
 
             
 
-def derive_parameters_series(flight, node_mgr, process_order, precomputed={}, mortal=True):
+def derive_parameters_series(flight, node_mgr, process_order, precomputed={}):
     '''
     Non HDF5 version. Suitable for FFD and Notebook profile development.
     
@@ -512,14 +512,14 @@ def derive_parameters_series(flight, node_mgr, process_order, precomputed={}, mo
 
         try:        
             deps, pre_aligned, node = get_deps_series(node_class, params, node_mgr, pre_aligned )
-        except:
+        except Exception, e:
             logger.exception('ERROR '+param_name+' get_deps')
             raise
         
         try:
             node.derive(*deps) #node.get_derived(deps)
             result = node
-        except:
+        except  Exception, e:
             logger.exception('ERROR '+param_name+' get_derived')
             raise            
         
@@ -571,7 +571,7 @@ def derive_parameters_series(flight, node_mgr, process_order, precomputed={}, mo
 
 ###################################################################################################
 
-def analyze_one(flight, output_path, profile, requested_params, available_nodes, mortal): 
+def analyze_one(flight, output_path, profile, requested_params, available_nodes): 
         # , test_param_names, test_node_mgr, test_process_order):
         '''analyze one flight'''
         #precomputed_parameters = flight.parameters.copy()        
@@ -586,8 +586,7 @@ def analyze_one(flight, output_path, profile, requested_params, available_nodes,
               )                  
         #pdb.set_trace()
         process_order, gr_st = dependency_order(node_mgr, draw=False) 
-        res, params = derive_parameters_series(flight, node_mgr, process_order, 
-                                                                         precomputed_parameters, mortal)
+        res, params = derive_parameters_series(flight, node_mgr, process_order, precomputed_parameters)
         #post-process: save
         for k in res['series'].keys():
                 flight.parameters[k] = res['series'][k]
@@ -661,6 +660,7 @@ def run_analyzer(short_profile,    module_names,
     '''
     print 'mortal', mortal
     logger = initialize_logger(LOG_LEVEL)
+    stage = 'analyze' if short_profile=='base' else 'profile'    
     if not files_to_process or len(files_to_process)==0:
         logger.warning('run_analyzer: No files to process.')
         return
@@ -670,8 +670,7 @@ def run_analyzer(short_profile,    module_names,
     
     # get frame info    
     
-    cn = fds_oracle.get_connection() if save_oracle else None   
-
+    cn = fds_oracle.get_connection() 
     #load airport and runway info
     cur = cn.cursor()
     apt_dict = load_apt_rwy.get_apt_dict(cur)
@@ -694,12 +693,11 @@ def run_analyzer(short_profile,    module_names,
     else:
         tpo=set(test_process_order)    
         series_to_load = tpo.intersection(test_flight.series.keys())
-    #print 'SERIES TO LOAD'
-    #for s in series_to_load:
-    #   print s
         
     ### loop over files and compute nodes for each
     file_count = len(files_to_process)
+    ok_count = 0
+    fail_count = 0
     logger.warning( 'Processing '+str(file_count)+' files.' )
     start_time = time.time()
     for flight_path_and_file in files_to_process:
@@ -713,23 +711,23 @@ def run_analyzer(short_profile,    module_names,
                                                                  apt_dict=apt_dict, apt_rwy_dict=apt_rwy_dict  )
         output_path  = get_output_file(output_dir, flight_path_and_file, short_profile)
         logger.info(' *** Processing flight %s', flight_file)
-        if mortal: #die on error
-            flight, res, params = analyze_one(flight, output_path, short_profile,  
-                                                                  requested_params, available_nodes, mortal)  
-            #, test_param_names, test_node_mgr, test_process_order)
+        try: 
+            flight, res, params = analyze_one(flight, output_path, short_profile, 
+                                                                  requested_params, available_nodes) 
             status='ok'
-        else:    #capture failure and keep on chuggin'
-            try: 
-                flight, res, params = analyze_one(flight, output_path, short_profile, 
-                                                                      requested_params, available_nodes, mortal) 
-                #, test_param_names, test_node_mgr, test_process_order)
-                status='ok'
-            except: 
-                analyzer_fail(flight_file)
-                status='fail'
+            ok_count += 1
+        except Exception, e: 
+            analyzer_fail(flight_file)
+            print e
+            status='fail'
+            fail_count += 1
+            if not mortal: 
+                continue
+            else:
+                raise
+                    
         proc_time = "{:2.4f}".format(time.time()-file_start_time)
         logger.warning(' *** Processing flight %s finished ' + flight_file + ' time: ' + proc_time + 'status: '+status)
-        stage = 'analyze' if short_profile=='base' else 'profile'    
         processing_time = time.time()-file_start_time
         if save_oracle: fds_oracle.report_timing(timestamp, stage, short_profile, flight_path_and_file, processing_time, status, logger, cn)
         if status=='ok' and save_oracle:  fds_oracle.analyzer_to_oracle(cn, short_profile, res, params, flight, output_dir, output_path)
@@ -738,9 +736,12 @@ def run_analyzer(short_profile,    module_names,
     fds_oracle.report_job(timestamp, stage, short_profile, comment, 
                                       file_repository, input_dir, output_dir, 
                                       len(files_to_process), (time.time()-start_time), logger, db_connection=cn)
-    if save_oracle:  cn.close()
+    cn.close()
     #for handler in logger.handlers(): handler.close()
-    return #flight
+    analyzer_status = {'timestamp':timestamp, 'file_count':file_count, 
+                                   'ok_count':ok_count, 'fail_count':fail_count 
+                                   }
+    return analyzer_status 
     
 
 def parallel_directview_generic(PROFILE_NAME, module_names, FILE_REPOSITORY, LOG_LEVEL, 
@@ -804,15 +805,15 @@ def run_profile(profile_name, module_names,
     reports_dir = reports_dir if reports_dir.endswith('/') or reports_dir.endswith('\\') else reports_dir +'/'
 
     print 'calling run_analyzer'
-    run_analyzer(profile_name, module_names, 
-             LOG_LEVEL, FILES_TO_PROCESS, 
-             'NA', output_dir, reports_dir, 
-             make_kml=MAKE_KML_FILES, 
-             save_oracle=save_oracle,
-             comment=COMMENT,
-             file_repository=FILE_REPOSITORY,
-             mortal=mortal)        
-    return
+    analyzer_status =run_analyzer(profile_name, module_names, 
+                                                     LOG_LEVEL, FILES_TO_PROCESS, 
+                                                     'NA', output_dir, reports_dir, 
+                                                     make_kml=MAKE_KML_FILES, 
+                                                     save_oracle=save_oracle,
+                                                     comment=COMMENT,
+                                                     file_repository=FILE_REPOSITORY,
+                                                     mortal=mortal)        
+    return analyzer_status 
      
 
 if __name__=='__main__':
