@@ -614,7 +614,7 @@ def load_flight(filepath, frame_dict, frame_hdfseries, file_repository,
                          series_to_load=[], flightrec_dict=None, apt_dict=None, apt_rwy_dict=None):
     '''load a Flight object'''
     aircraft_info = get_aircraft_info( filepath, frame_dict)                
-    
+    aircraft_info['Myfile']=filepath
     logger.debug(aircraft_info)
     flight_dict = {'filepath': filepath, 'aircraft_info':aircraft_info}
     flight = Flight()   
@@ -633,6 +633,7 @@ def load_flight(filepath, frame_dict, frame_hdfseries, file_repository,
     else:
         print 'Aack!!! Unknown file type'
     return flight, frame_hdfseries
+
     
 def analyzer_fail(flight_file):
         ex_type, ex, tracebck = sys.exc_info()
@@ -640,9 +641,27 @@ def analyzer_fail(flight_file):
         traceback.print_tb(tracebck)        
         return tracebck               
 
+
+def group_flights_by_fleet(files_to_process, frame_dict):
+    '''group flights by LFL / fleet type : dict {lfl: [files using lfl]}
+    for each flight
+     1. get tail #
+     2. look up frame
+     3. add flight to dict under lfl key
+    ''' 
+    lfl_flights = {}
+    for flight_file in files_to_process:
+        acinfo = get_aircraft_info(flight_file, frame_dict)    
+        lfl=acinfo['Frame']
+        if lfl_flights.has_key(lfl):
+            lfl_flights[lfl].append(flight_file)
+        else:
+            lfl_flights[lfl] = [flight_file]
+    return lfl_flights    
+
         
 def run_analyzer(short_profile,    module_names,
-                 LOG_LEVEL,           files_to_process,   
+                 LOG_LEVEL,           files_to_process_all,   
                  input_dir,        output_dir,       reports_dir, 
                  flightrec_dict=None,     #for AFR
                  make_kml=False,   
@@ -652,25 +671,22 @@ def run_analyzer(short_profile,    module_names,
                  mortal=True ):    
     '''
     run FlightDataAnalyzer for analyze and profile. mostly file mgmt and reporting.
-    currently runs against a single fleet at a time.
-    
-    afr_dict is an optional dictionary mapping file paths to airport/runway attributes
-    
-    TODO: add loop per fleet
+    afr_dict is an optional dictionary mapping file paths to airport/runway attributes.
     '''
     print 'mortal', mortal
     logger = initialize_logger(LOG_LEVEL)
     stage = 'analyze' if short_profile=='base' else 'profile'    
-    if not files_to_process or len(files_to_process)==0:
+    if not files_to_process_all or len(files_to_process_all)==0:
         logger.warning('run_analyzer: No files to process.')
         return
     timestamp = datetime.now()
-    frame_dict = frame_list.build_frame_list(logger)
-    frame_hdfseries = {} # for each lfl, keep a list of available hdf series
-    
+
     # get frame info    
+    frame_dict = frame_list.build_frame_list(logger)
+    frame_hdfseries = {} # for each lfl, keep a list of available hdf series    
     
     cn = fds_oracle.get_connection() 
+
     #load airport and runway info
     cur = cn.cursor()
     apt_dict = load_apt_rwy.get_apt_dict(cur)
@@ -678,56 +694,64 @@ def run_analyzer(short_profile,    module_names,
     apt_rwy_dict = load_apt_rwy.get_apt_rwy_dict(cur)
     cur.close()
 
-    requested_params, available_nodes = prep_nodes(short_profile, module_names)
-    test_file    = files_to_process[0]
+    '''process each fleet separately'''
+    lfl_flights = group_flights_by_fleet(files_to_process_all, frame_dict)
+    #start of fleet loop
+    for lfl in lfl_flights.keys():
+        print "processing LFL", lfl
+        files_to_process = lfl_flights[lfl]
     
-    test_flight, frame_hdfseries = load_flight( test_file, frame_dict, frame_hdfseries, file_repository, 
-                                                                       flightrec_dict=flightrec_dict, 
-                                                                       apt_dict=apt_dict, apt_rwy_dict=apt_rwy_dict  )
-    logger.warning( 'test_file for prep_order(): '+ test_file)
-    #test_param_names = test_flight.parameters.keys()
-    test_node_mgr, test_process_order = prep_order(test_flight, frame_dict, start_datetime, 
-                                                                                   available_nodes, requested_params)
-    if short_profile=='base':
-        series_to_load= []
-    else:
-        tpo=set(test_process_order)    
-        series_to_load = tpo.intersection(test_flight.series.keys())
+        requested_params, available_nodes = prep_nodes(short_profile, module_names)
+        test_file    = files_to_process[0]
         
-    ### loop over files and compute nodes for each
-    file_count = len(files_to_process)
-    ok_count = 0
-    fail_count = 0
-    logger.warning( 'Processing '+str(file_count)+' files.' )
-    start_time = time.time()
-    for flight_path_and_file in files_to_process:
-        status=None
-        file_start_time = time.time()
-        flight_file          = os.path.basename(flight_path_and_file)
-        logger.warning('starting '+ flight_file)
-        flight, frame_hdfseries = load_flight(flight_path_and_file, frame_dict, frame_hdfseries, file_repository, 
-                                                                 series_to_load=series_to_load, 
-                                                                 flightrec_dict=flightrec_dict,
-                                                                 apt_dict=apt_dict, apt_rwy_dict=apt_rwy_dict  )
-        output_path  = get_output_file(output_dir, flight_path_and_file, short_profile)
-        logger.info(' *** Processing flight %s', flight_file)
-        try: 
-            flight, res, params = analyze_one(flight, output_path, short_profile, 
-                                                                  requested_params, available_nodes) 
-            status='ok'
-            ok_count += 1
-        except Exception, e: 
-            analyzer_fail(flight_file)
-            print e
-            status='fail'
-            fail_count += 1
-            if not mortal: 
-                continue
-            else:
-                raise
-                    
+        test_flight, frame_hdfseries = load_flight( test_file, frame_dict, frame_hdfseries, file_repository, 
+                                                                           flightrec_dict=flightrec_dict, 
+                                                                           apt_dict=apt_dict, apt_rwy_dict=apt_rwy_dict  )
+        logger.warning( 'test_file for prep_order(): '+ test_file)
+        #test_param_names = test_flight.parameters.keys()
+        test_node_mgr, test_process_order = prep_order(test_flight, frame_dict, start_datetime, 
+                                                                                       available_nodes, requested_params)
+        if short_profile=='base':
+            series_to_load= []
+        else:
+            tpo=set(test_process_order)    
+            series_to_load = tpo.intersection(test_flight.series.keys())
+            
+        ### loop over files and compute nodes for each
+        file_count = len(files_to_process)
+        ok_count = 0
+        fail_count = 0
+        logger.warning( 'Processing '+str(file_count)+' files.' )
+        start_time = time.time()
+        for flight_path_and_file in files_to_process:
+            status=None
+            file_start_time = time.time()
+            flight_file          = os.path.basename(flight_path_and_file)
+            logger.warning('starting '+ flight_file)
+            flight, frame_hdfseries = load_flight(flight_path_and_file, frame_dict, frame_hdfseries, file_repository, 
+                                                                     series_to_load=series_to_load, 
+                                                                     flightrec_dict=flightrec_dict,
+                                                                     apt_dict=apt_dict, apt_rwy_dict=apt_rwy_dict  )
+            output_path  = get_output_file(output_dir, flight_path_and_file, short_profile)
+            logger.info(' *** Processing flight %s', flight_file)
+            try: 
+                flight, res, params = analyze_one(flight, output_path, short_profile, 
+                                                                      requested_params, available_nodes) 
+                status='ok'
+                ok_count += 1
+            except Exception, e: 
+                analyzer_fail(flight_file)
+                print e
+                status='fail'
+                fail_count += 1
+                if not mortal: 
+                    continue
+                else:
+                    raise
+                
+        #end of fleet loop                    
         proc_time = "{:2.4f}".format(time.time()-file_start_time)
-        logger.warning(' *** Processing flight %s finished ' + flight_file + ' time: ' + proc_time + 'status: '+status)
+        logger.warning(' *** Processing flight %s finished ' + flight_file + ' time: ' + proc_time + ' status: '+status)
         processing_time = time.time()-file_start_time
         if save_oracle: fds_oracle.report_timing(timestamp, stage, short_profile, flight_path_and_file, processing_time, status, logger, cn)
         if status=='ok' and save_oracle:  fds_oracle.analyzer_to_oracle(cn, short_profile, res, params, flight, output_dir, output_path)
@@ -817,4 +841,17 @@ def run_profile(profile_name, module_names,
      
 
 if __name__=='__main__':
+    # test grouping of flights by fleet
+    frame_dict = frame_list.build_frame_list(logger)
+    query="""select file_path from fds_flight_record 
+           where fleet_series='B747-200' and file_repository='linux' and rownum<=10
+        union all
+        select file_path from fds_flight_record 
+           where fleet_series='CRJ 700' and file_repository='linux' and rownum<=10
+        union all
+        select file_path from fds_flight_record 
+           where fleet_series='A320-200' and file_repository='linux' and rownum<=10"""
+    files_to_process = fds_oracle.flight_record_filepaths(query)
+    lfl_flights = group_flights_by_fleet(files_to_process, frame_dict)
+    print lfl_flights
     print 'loaded'
