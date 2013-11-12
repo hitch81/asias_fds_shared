@@ -749,13 +749,13 @@ def run_analyzer(short_profile,    module_names,
                 else:
                     raise
                 
-        #end of fleet loop                    
-        proc_time = "{:2.4f}".format(time.time()-file_start_time)
-        logger.warning(' *** Processing flight %s finished ' + flight_file + ' time: ' + proc_time + ' status: '+status)
-        processing_time = time.time()-file_start_time
-        if save_oracle: fds_oracle.report_timing(timestamp, stage, short_profile, flight_path_and_file, processing_time, status, logger, cn)
-        if status=='ok' and save_oracle:  fds_oracle.analyzer_to_oracle(cn, short_profile, res, params, flight, output_dir, output_path)
-        if status=='ok' and make_kml:    make_kml_file(start_datetime, res['attr'], res['kti'], res['kpv'], flight_file, reports_dir, output_path)
+            proc_time = "{:2.4f}".format(time.time()-file_start_time)
+            logger.warning(' *** Processing flight %s finished ' + flight_file + ' time: ' + proc_time + ' status: '+status)
+            processing_time = time.time()-file_start_time
+            if save_oracle: fds_oracle.report_timing(timestamp, stage, short_profile, flight_path_and_file, processing_time, status, logger, cn)
+            if status=='ok' and save_oracle:  fds_oracle.analyzer_to_oracle(cn, short_profile, res, params, flight, output_dir, output_path)
+            if status=='ok' and make_kml:    make_kml_file(start_datetime, res['attr'], res['kti'], res['kpv'], flight_file, reports_dir, output_path)
+            #end of fleet loop                    
 
     fds_oracle.report_job(timestamp, stage, short_profile, comment, 
                                       file_repository, input_dir, output_dir, 
