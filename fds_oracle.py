@@ -87,12 +87,12 @@ def dict_to_oracle(cn, mydict, table):
 
 
 
-def analyzer_to_oracle(cn, short_profile, res, params, flight, output_dir, output_path_and_file): # file_repository in Flight
+def analyzer_to_oracle(cn, short_profile, res, params, flight, output_dir, output_path_and_file, timestamp): # file_repository in Flight
         file_repository = flight.file_repository
         flight_file = os.path.basename(flight.filepath)
-        kti_to_oracle(cn, short_profile, flight_file, output_path_and_file, res['kti'], file_repository)
-        phase_to_oracle(cn, short_profile, flight_file, output_path_and_file, res['phase'], file_repository)
-        kpv_to_oracle(cn, short_profile, flight_file, output_path_and_file, params, res['kpv'], file_repository)
+        kti_to_oracle(cn, short_profile, flight_file, output_path_and_file, res['kti'], file_repository,timestamp)
+        phase_to_oracle(cn, short_profile, flight_file, output_path_and_file, res['phase'], file_repository,timestamp)
+        kpv_to_oracle(cn, short_profile, flight_file, output_path_and_file, params, res['kpv'], file_repository,timestamp)
         if short_profile=='base':  # for base analyze, store flight record
              flight_record = get_flight_record(flight.filepath , flight.start_datetime, flight.aircraft_info, output_path_and_file, res['attr'], res['approach'], res['kti'], file_repository) # an OrderedDict
              save_flight_record(cn, flight_record, output_dir, output_path_and_file)                     
@@ -197,7 +197,7 @@ def save_flight_record(cn, flight_record, OUTPUT_DIR, output_path_and_file):
      #logger.debug(flight_record)
 
 
-def kti_to_oracle(cn, profile, flight_file, output_path_and_file, kti, file_repository='linux'):
+def kti_to_oracle(cn, profile, flight_file, output_path_and_file, kti, file_repository='linux', run_time=None):
     '''node: index name datetime latitude longitude'''
     if profile=='base':
         base_file = os.path.basename(output_path_and_file)
@@ -206,20 +206,20 @@ def kti_to_oracle(cn, profile, flight_file, output_path_and_file, kti, file_repo
         
     rows = []    
     for value in kti:
-        vals = [profile, flight_file, value.name, float(value.index), base_file, file_repository]
+        vals = [profile, flight_file, value.name, float(value.index), base_file, file_repository, run_time]
         if value.index and value.index>=0:
             rows.append( vals )    
         else:
             print 'suspect kti index', value.name, value.index
-    dsql= """delete from fds_kti where file_repository='REPO' and source_file='SRC' and profile='PROFILE'""".replace('PROFILE',profile).replace('REPO',file_repository).replace('SRC', flight_file)
-    oracle_execute(cn, dsql)
+    #dsql= """delete from fds_kti where file_repository='REPO' and source_file='SRC' and profile='PROFILE'""".replace('PROFILE',profile).replace('REPO',file_repository).replace('SRC', flight_file)
+    #oracle_execute(cn, dsql)
 
-    isql = """insert /*append*/ into fds_kti (profile, source_file,  name,  time_index, base_file_path, file_repository) 
-                                    values (:profile, :source_file, :name, :time_index, :base_file_path, :file_repository)"""                
+    isql = """insert /*append*/ into fds_kti (profile, source_file,  name,  time_index, base_file_path, file_repository, run_time) 
+                                    values (:profile, :source_file, :name, :time_index, :base_file_path, :file_repository, :run_time)"""                
     oracle_executemany(cn, isql, rows)
 
 
-def kpv_to_oracle(cn, profile, flight_file, output_path_and_file, params, kpv, file_repository='linux'):
+def kpv_to_oracle(cn, profile, flight_file, output_path_and_file, params, kpv, file_repository='linux', run_time=None):
     '''node: index value name slice datetime latitude longitude'''
     if profile=='base':
         base_file = os.path.basename(output_path_and_file)
@@ -232,16 +232,16 @@ def kpv_to_oracle(cn, profile, flight_file, output_path_and_file, params, kpv, f
             units = params.get(value.name).units
         except:
             units = None
-        vals = [profile, flight_file, value.name, float(value.index), float(value.value), base_file, units, file_repository ] 
+        vals = [profile, flight_file, value.name, float(value.index), float(value.value), base_file, units, file_repository, run_time ] 
         rows.append( vals )
-    dsql= """delete from fds_kpv where file_repository='REPO' and source_file='SRC' and profile='PROFILE'""".replace('PROFILE',profile).replace('REPO',file_repository).replace('SRC', flight_file)
-    oracle_execute(cn, dsql)
-    isql = """insert /*append*/ into fds_kpv (profile, source_file,  name,  time_index,  value,  base_file_path,  units, file_repository) 
-                                    values (:profile, :source_file, :name, :time_index, :value, :base_file_path, :units, :file_repository)"""
+    #dsql= """delete from fds_kpv where file_repository='REPO' and source_file='SRC' and profile='PROFILE'""".replace('PROFILE',profile).replace('REPO',file_repository).replace('SRC', flight_file)
+    #oracle_execute(cn, dsql)
+    isql = """insert /*append*/ into fds_kpv (profile, source_file,  name,  time_index,  value,  base_file_path,  units, file_repository, run_time) 
+                                    values (:profile, :source_file, :name, :time_index, :value, :base_file_path, :units, :file_repository, :run_time)"""
     oracle_executemany(cn, isql, rows)
 
     
-def phase_to_oracle(cn, profile, flight_file, output_path_and_file, phase_list, file_repository='linux'):
+def phase_to_oracle(cn, profile, flight_file, output_path_and_file, phase_list, file_repository='linux', run_time=None):
     '''node: 'name slice start_edge stop_edge'''
     if profile=='base':
         base_file = os.path.basename(output_path_and_file)
@@ -249,12 +249,12 @@ def phase_to_oracle(cn, profile, flight_file, output_path_and_file, phase_list, 
         base_file=os.path.basename(flight_file)
     rows = []    
     for value in phase_list:
-        vals = [profile, flight_file, value.name, float(value.start_edge), float(value.stop_edge), value.stop_edge-value.start_edge, base_file, file_repository ]                
+        vals = [profile, flight_file, value.name, float(value.start_edge), float(value.stop_edge), value.stop_edge-value.start_edge, base_file, file_repository, run_time ]                
         rows.append( vals )
-    dsql= """delete from fds_phase where file_repository='REPO' and source_file='SRC' and profile='PROFILE'""".replace('PROFILE',profile).replace('REPO',file_repository).replace('SRC', flight_file)
-    oracle_execute(cn, dsql)
-    isql = """insert /*append*/ into fds_phase (profile, source_file,  name,  time_index,  stop_edge, duration, base_file_path, file_repository) 
-                                    values (:profile, :source_file, :name,   :time_index, :stop_edge, :duration, :base_file_path, :file_repository)"""
+    #dsql= """delete from fds_phase where file_repository='REPO' and source_file='SRC' and profile='PROFILE'""".replace('PROFILE',profile).replace('REPO',file_repository).replace('SRC', flight_file)
+    #oracle_execute(cn, dsql)
+    isql = """insert /*append*/ into fds_phase (profile, source_file,  name,  time_index,  stop_edge, duration, base_file_path, file_repository, run_time) 
+                                    values (:profile, :source_file, :name,   :time_index, :stop_edge, :duration, :base_file_path, :file_repository, :run_time)"""
     oracle_executemany(cn, isql, rows)
 
 
