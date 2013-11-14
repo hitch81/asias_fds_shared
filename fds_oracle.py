@@ -303,7 +303,7 @@ def initialize_timing_report(REPORTS_DIR):
    
 
 def report_timing(timestamp, stage, profile, filepath, 
-                  processing_time, status, logger, db_connection=None):
+                  processing_time, status, logger, db_connection=None,file_repository=None):
     '''save timing record to csv and if oracle (if available)'''
     #if profile=='base':
     #    report_name = settings.PREP_REPORTS_PATH + 'fds_processing_time.csv'        
@@ -319,6 +319,7 @@ def report_timing(timestamp, stage, profile, filepath,
                        ('processing_seconds', processing_time),
                        ('epoch', time.time()),
                        ('status',status),
+                       ('file_repository',file_repository) 
                      ])
     #print timing_rec                                          
     #with open(report_name,'a') as rpt:
