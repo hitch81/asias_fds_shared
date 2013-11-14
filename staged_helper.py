@@ -221,6 +221,49 @@ def dump_pickles(output_path_and_file, params, kti, kpv, phases, approach, fligh
     logger.info('saved '+ pickle_file)
 
 
+def report_sql(PROFILE_NAME, timestamp):
+    """provide profile users some sql for reviewing their profile output"""
+    ts=timestamp.strftime('%Y-%m-%d %H:%M:%S')
+    rpt_sql={}
+    
+    rpt_sql['by flight'] ="""select tm.source_file, tm.status, tail_number, fleet_series, operator, 
+   orig_icao, dest_icao, orig_rwy, dest_rwy, duration, liftoff_min, touchdown_min, 
+   download_datestr, flight_type,   tm.processing_seconds as proc_sec, tm.run_time, tm.profile 
+from fds_processing_time tm join fds_flight_record flt 
+   on tm.file_repository=flt.file_repository and tm.source_file=flt.base_file_path
+         where tm.file_repository='linux'
+           and tm.profile='PROFILE' 
+           and tm.run_time=to_date('TIMESTAMP', 'YYYY-MM-DD HH24:MI:SS')
+           """.replace('TIMESTAMP',ts).replace('PROFILE',PROFILE_NAME)
+
+    rpt_sql['by measure']="""select * from (
+        select 'KPV' as src, name, time_index, value, units, 
+               run_time, source_file, file_repository 
+        from fds_kpv
+         where file_repository='linux'
+           and profile='PROFILE'
+           and run_time=to_date('TIMESTAMP','YYYY-MM-DD HH24:MI:SS')
+
+        union all
+        select 'KTI' as src, name, time_index, null value, 'index' as units, 
+                run_time, source_file, file_repository --,f.file_path --, kpv.name, kpv.value
+        from fds_kti 
+         where file_repository='linux'
+           and profile='PROFILE' 
+           and run_time=to_date('TIMESTAMP','YYYY-MM-DD HH24:MI:SS')        
+           
+        union all
+        select 'Phase' as src, name, time_index, duration as value, 'duration' as units, 
+               run_time, source_file, file_repository 
+        from fds_phase
+         where file_repository='linux'
+           and profile='PROFILE' 
+           and run_time=to_date('TIMESTAMP','YYYY-MM-DD HH24:MI:SS')
+        )
+        order by src,name, source_file
+        """.replace('PROFILE',PROFILE_NAME).replace('TIMESTAMP',ts)
+    return rpt_sql
+        
 
 ### run FlightDataAnalyzer for analyze and profile
 
@@ -753,7 +796,7 @@ def run_analyzer(short_profile,    module_names,
             proc_time = "{:2.4f}".format(time.time()-file_start_time)
             logger.warning(' *** Processing flight %s finished ' + flight_file + ' time: ' + proc_time + ' status: '+status)
             processing_time = time.time()-file_start_time
-            if save_oracle: fds_oracle.report_timing(timestamp, stage, short_profile, flight_path_and_file, processing_time, status, logger, cn)
+            if save_oracle: fds_oracle.report_timing(timestamp, stage, short_profile, flight_path_and_file, processing_time, status, logger, cn, file_repository)
             if status=='ok' and save_oracle:  fds_oracle.analyzer_to_oracle(cn, short_profile, res, params, flight, output_dir, output_path, timestamp)
             if status=='ok' and make_kml:    make_kml_file(start_datetime, res['attr'], res['kti'], res['kpv'], flight_file, reports_dir, output_path)
             #end of fleet loop                    
