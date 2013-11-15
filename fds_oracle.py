@@ -6,6 +6,7 @@ Database routines -- Oracle stuff
 """
 import os
 import time
+import getpass
 from datetime import datetime
 from collections import OrderedDict
 import cx_Oracle as ora
@@ -282,9 +283,12 @@ def report_job(timestamp,   stage, profile, comment,
                             ('profile', profile),       ('cmt', comment), 
                             ('file_repository',file_repository),
                             ('input_path', input_path), ('output_path', output_path),
-                            ('file_count', file_count), ('processing_seconds', processing_seconds)
+                            ('file_count', file_count), ('processing_seconds', processing_seconds),
+                            ('username',getpass.getuser())
                           ]) 
-    print job_rec                                          
+    print "report_job()", getpass.getuser()
+    print job_rec
+                                             
     #with open(report_name,'a') as rpt:
     #    rpt.write( ','.join([ str(v) for v in job_rec.values()]) + '\n') 
     if db_connection:            
@@ -319,7 +323,8 @@ def report_timing(timestamp, stage, profile, filepath,
                        ('processing_seconds', processing_time),
                        ('epoch', time.time()),
                        ('status',status),
-                       ('file_repository',file_repository) 
+                       ('file_repository',file_repository) ,
+                      ('username',getpass.getuser())
                      ])
     #print timing_rec                                          
     #with open(report_name,'a') as rpt:
